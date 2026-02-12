@@ -215,3 +215,53 @@ func TestReadAll_StopsAtCorruptRecord(t *testing.T) {
 		t.Errorf("expected 2 records, got %d", len(records))
 	}
 }
+
+func TestLog_DataSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	// Write some records
+	l, err := log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open log: %v", err)
+	}
+
+	expected := []string{"event1", "event2", "event3"}
+	positions := make([]int64, len(expected))
+	for i, s := range expected {
+		pos, err := l.Append([]byte(s))
+		if err != nil {
+			t.Fatalf("failed to append: %v", err)
+		}
+		positions[i] = pos
+	}
+	l.Close()
+
+	// Reopen the log (simulating restart)
+	l, err = log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to reopen log: %v", err)
+	}
+	defer l.Close()
+
+	// Verify all records via ReadAt
+	for i, pos := range positions {
+		data, err := l.ReadAt(pos)
+		if err != nil {
+			t.Fatalf("failed to read at %d: %v", pos, err)
+		}
+		if string(data) != expected[i] {
+			t.Errorf("position %d: expected '%s', got '%s'", pos, expected[i], string(data))
+		}
+	}
+
+	// Verify via ReadAll
+	records, err := l.ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read all: %v", err)
+	}
+
+	if len(records) != len(expected) {
+		t.Fatalf("expected %d records, got %d", len(expected), len(records))
+	}
+}
