@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package eventstore;
+
+option go_package = "github.com/hydra-db/hydra/server/grpc/proto";
+
+// EventStore service definition
+service EventStore {
+  // Append an event to a stream
+  rpc Append(AppendRequest) returns (AppendResponse);
+
+  // Read all events from a stream (server streaming)
+  rpc ReadStream(ReadStreamRequest) returns (stream Event);
+
+  // Read all events in global order (server streaming)
+  rpc ReadAll(ReadAllRequest) returns (stream Event);
+
+  // Health check
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message AppendRequest {
+  string stream_id = 1;
+  string event_id = 2;
+  bytes data = 3;
+  int64 expected_version = 4;
+}
+
+message AppendResponse {
+  int64 position = 1;
+  int64 version = 2;
+}
+
+message ReadStreamRequest {
+  string stream_id = 1;
+  int64 from_version = 2;  // 0 means from beginning
+}
+
+message ReadAllRequest {
+  int64 from_position = 1;  // 0 means from beginning
+}
+
+message Event {
+  int64 position = 1;
+  string stream_id = 2;
+  int64 version = 3;
+  bytes data = 4;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+}
