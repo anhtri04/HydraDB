@@ -1,12 +1,21 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
 
 	"github.com/hydra-db/hydra/store"
 )
+
+// generateEventID creates a unique event ID
+func generateEventID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 const dataFile = "bank.log"
 
@@ -117,12 +126,6 @@ func openAccount(accountID, owner string) {
 	}
 	defer s.Close()
 
-	// Check if account already exists (stream has events)
-	if s.StreamVersion(accountID) > 0 {
-		fmt.Printf("Account %s already exists\n", accountID)
-		os.Exit(1)
-	}
-
 	// Create and store the event
 	event, err := NewAccountOpenedEvent(accountID, owner)
 	if err != nil {
@@ -136,13 +139,18 @@ func openAccount(accountID, owner string) {
 		os.Exit(1)
 	}
 
-	pos, version, err := s.Append(accountID, data)
+	// Use ExpectedVersionNoStream to ensure account doesn't already exist
+	result, err := s.Append(accountID, generateEventID(), data, store.ExpectedVersionNoStream)
+	if err == store.ErrStreamExists {
+		fmt.Printf("Account %s already exists\n", accountID)
+		os.Exit(1)
+	}
 	if err != nil {
 		fmt.Printf("Failed to append event: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Account %s opened for %s (position=%d, version=%d)\n", accountID, owner, pos, version)
+	fmt.Printf("Account %s opened for %s (position=%d, version=%d)\n", accountID, owner, result.Position, result.Version)
 }
 
 func deposit(accountID string, amount int64, note string) {
@@ -158,12 +166,15 @@ func deposit(accountID string, amount int64, note string) {
 	}
 	defer s.Close()
 
-	// Check if account exists
-	account := replayAccount(s, accountID)
-	if !account.Exists {
+	// Get current version for optimistic concurrency
+	currentVersion := s.StreamVersion(accountID)
+	if currentVersion == 0 {
 		fmt.Printf("Account %s does not exist. Open it first.\n", accountID)
 		os.Exit(1)
 	}
+
+	// Replay account to get balance
+	account := replayAccount(s, accountID)
 
 	// Create and store the event
 	event, err := NewMoneyDepositedEvent(accountID, amount, note)
@@ -178,14 +189,19 @@ func deposit(accountID string, amount int64, note string) {
 		os.Exit(1)
 	}
 
-	pos, version, err := s.Append(accountID, data)
+	// Use currentVersion for optimistic concurrency control
+	result, err := s.Append(accountID, generateEventID(), data, currentVersion)
+	if err == store.ErrWrongExpectedVersion {
+		fmt.Println("Concurrent modification detected. Please retry.")
+		os.Exit(1)
+	}
 	if err != nil {
 		fmt.Printf("Failed to append event: %v\n", err)
 		os.Exit(1)
 	}
 
 	newBalance := account.Balance + amount
-	fmt.Printf("Deposited $%d to %s (balance=$%d, position=%d, version=%d)\n", amount, accountID, newBalance, pos, version)
+	fmt.Printf("Deposited $%d to %s (balance=$%d, position=%d, version=%d)\n", amount, accountID, newBalance, result.Position, result.Version)
 }
 
 func withdraw(accountID string, amount int64, note string) {
@@ -201,12 +217,15 @@ func withdraw(accountID string, amount int64, note string) {
 	}
 	defer s.Close()
 
-	// Check if account exists and has sufficient balance
-	account := replayAccount(s, accountID)
-	if !account.Exists {
+	// Get current version for optimistic concurrency
+	currentVersion := s.StreamVersion(accountID)
+	if currentVersion == 0 {
 		fmt.Printf("Account %s does not exist. Open it first.\n", accountID)
 		os.Exit(1)
 	}
+
+	// Replay account to get balance
+	account := replayAccount(s, accountID)
 	if account.Balance < amount {
 		fmt.Printf("Insufficient balance. Current balance: $%d, requested: $%d\n", account.Balance, amount)
 		os.Exit(1)
@@ -225,14 +244,19 @@ func withdraw(accountID string, amount int64, note string) {
 		os.Exit(1)
 	}
 
-	pos, version, err := s.Append(accountID, data)
+	// Use currentVersion for optimistic concurrency control
+	result, err := s.Append(accountID, generateEventID(), data, currentVersion)
+	if err == store.ErrWrongExpectedVersion {
+		fmt.Println("Concurrent modification detected. Please retry.")
+		os.Exit(1)
+	}
 	if err != nil {
 		fmt.Printf("Failed to append event: %v\n", err)
 		os.Exit(1)
 	}
 
 	newBalance := account.Balance - amount
-	fmt.Printf("Withdrew $%d from %s (balance=$%d, position=%d, version=%d)\n", amount, accountID, newBalance, pos, version)
+	fmt.Printf("Withdrew $%d from %s (balance=$%d, position=%d, version=%d)\n", amount, accountID, newBalance, result.Position, result.Version)
 }
 
 func showBalance(accountID string) {
