@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hydra-db/hydra/pubsub"
 	"github.com/hydra-db/hydra/store"
 	grpcserver "github.com/hydra-db/hydra/server/grpc"
 	httpserver "github.com/hydra-db/hydra/server/http"
@@ -20,6 +21,10 @@ func main() {
 		log.Fatalf("Failed to open store: %v", err)
 	}
 	defer s.Close()
+
+	// Create broadcaster for real-time subscriptions
+	broadcaster := pubsub.NewBroadcaster()
+	s.SetBroadcaster(broadcaster)
 
 	// Create servers
 	httpSrv := httpserver.NewServer(s, 8080)
