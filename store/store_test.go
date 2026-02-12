@@ -91,3 +91,37 @@ func TestStore_ReadStream(t *testing.T) {
 		}
 	}
 }
+
+func TestStore_ReadStreamFrom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append 5 events
+	for i := 0; i < 5; i++ {
+		s.Append("alice", []byte("event"))
+	}
+
+	// Read from version 2 onwards
+	events, err := s.ReadStreamFrom("alice", 2)
+	if err != nil {
+		t.Fatalf("failed to read stream: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events (versions 2,3,4), got %d", len(events))
+	}
+
+	// Verify versions
+	for i, e := range events {
+		expectedVersion := int64(2 + i)
+		if e.StreamVersion != expectedVersion {
+			t.Errorf("event %d: expected version %d, got %d", i, expectedVersion, e.StreamVersion)
+		}
+	}
+}
