@@ -170,3 +170,35 @@ func TestStore_ReadAll(t *testing.T) {
 		}
 	}
 }
+
+func TestAppend_RejectsWrongExpectedVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append first event (version becomes 1)
+	_, err = s.Append("alice", "event-1", []byte("data1"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("failed to append: %v", err)
+	}
+
+	// Try to append with wrong expected version (expecting 0, but it's 1)
+	_, err = s.Append("alice", "event-2", []byte("data2"), 0)
+	if err != store.ErrWrongExpectedVersion {
+		t.Errorf("expected ErrWrongExpectedVersion, got %v", err)
+	}
+
+	// Append with correct expected version should work
+	result, err := s.Append("alice", "event-2", []byte("data2"), 1)
+	if err != nil {
+		t.Fatalf("failed to append with correct version: %v", err)
+	}
+	if result.Version != 1 { // 0-indexed, so second event is version 1
+		t.Errorf("expected version 1, got %d", result.Version)
+	}
+}
