@@ -335,3 +335,42 @@ func TestAppend_IdempotentWithSameEventID(t *testing.T) {
 	// Suppress unused variable warning
 	_ = result1
 }
+
+func TestAppend_IdempotencySurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	// Open and write
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+
+	_, err = s.Append("alice", "persistent-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("first append failed: %v", err)
+	}
+	s.Close()
+
+	// Reopen (simulating restart)
+	s, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to reopen store: %v", err)
+	}
+	defer s.Close()
+
+	// Retry with same eventID should be idempotent
+	result, err := s.Append("alice", "persistent-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("idempotent append after restart should succeed, got: %v", err)
+	}
+
+	if result.Position != -1 {
+		t.Errorf("expected position -1 for idempotent write, got %d", result.Position)
+	}
+
+	// Still only 1 event
+	if s.StreamVersion("alice") != 1 {
+		t.Errorf("expected version 1, got %d", s.StreamVersion("alice"))
+	}
+}
