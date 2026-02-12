@@ -37,6 +37,8 @@ type EventStoreServer interface {
 	ReadStream(*ReadStreamRequest, EventStore_ReadStreamServer) error
 	ReadAll(*ReadAllRequest, EventStore_ReadAllServer) error
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
+	SubscribeToAll(*SubscribeToAllRequest, EventStore_SubscribeToAllServer) error
+	SubscribeToStream(*SubscribeToStreamRequest, EventStore_SubscribeToStreamServer) error
 	mustEmbedUnimplementedEventStoreServer()
 }
 
@@ -48,6 +50,18 @@ type EventStore_ReadStreamServer interface {
 
 // EventStore_ReadAllServer is the server stream for ReadAll
 type EventStore_ReadAllServer interface {
+	Send(*Event) error
+	grpc.ServerStream
+}
+
+// EventStore_SubscribeToAllServer is the server stream for SubscribeToAll
+type EventStore_SubscribeToAllServer interface {
+	Send(*Event) error
+	grpc.ServerStream
+}
+
+// EventStore_SubscribeToStreamServer is the server stream for SubscribeToStream
+type EventStore_SubscribeToStreamServer interface {
 	Send(*Event) error
 	grpc.ServerStream
 }
@@ -69,6 +83,14 @@ func (UnimplementedEventStoreServer) ReadAll(*ReadAllRequest, EventStore_ReadAll
 
 func (UnimplementedEventStoreServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Health not implemented")
+}
+
+func (UnimplementedEventStoreServer) SubscribeToAll(*SubscribeToAllRequest, EventStore_SubscribeToAllServer) error {
+	return status.Errorf(codes.Unimplemented, "method SubscribeToAll not implemented")
+}
+
+func (UnimplementedEventStoreServer) SubscribeToStream(*SubscribeToStreamRequest, EventStore_SubscribeToStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method SubscribeToStream not implemented")
 }
 
 func (UnimplementedEventStoreServer) mustEmbedUnimplementedEventStoreServer() {}
@@ -106,6 +128,16 @@ var EventStore_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ReadAll",
 			Handler:       _EventStore_ReadAll_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SubscribeToAll",
+			Handler:       _EventStore_SubscribeToAll_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SubscribeToStream",
+			Handler:       _EventStore_SubscribeToStream_Handler,
 			ServerStreams: true,
 		},
 	},
@@ -178,4 +210,36 @@ func _EventStore_ReadAll_Handler(srv interface{}, stream grpc.ServerStream) erro
 		return err
 	}
 	return srv.(EventStoreServer).ReadAll(m, &eventStoreReadAllServer{stream})
+}
+
+type eventStoreSubscribeToAllServer struct {
+	grpc.ServerStream
+}
+
+func (x *eventStoreSubscribeToAllServer) Send(m *Event) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func _EventStore_SubscribeToAll_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeToAllRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(EventStoreServer).SubscribeToAll(m, &eventStoreSubscribeToAllServer{stream})
+}
+
+type eventStoreSubscribeToStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *eventStoreSubscribeToStreamServer) Send(m *Event) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func _EventStore_SubscribeToStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeToStreamRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(EventStoreServer).SubscribeToStream(m, &eventStoreSubscribeToStreamServer{stream})
 }

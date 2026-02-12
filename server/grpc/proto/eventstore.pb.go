@@ -43,3 +43,14 @@ type HealthRequest struct{}
 type HealthResponse struct {
 	Status string `json:"status,omitempty"`
 }
+
+// SubscribeToAllRequest is the request for SubscribeToAll RPC
+type SubscribeToAllRequest struct {
+	FromPosition int64 `json:"from_position,omitempty"`
+}
+
+// SubscribeToStreamRequest is the request for SubscribeToStream RPC
+type SubscribeToStreamRequest struct {
+	StreamId    string `json:"stream_id,omitempty"`
+	FromVersion int64  `json:"from_version,omitempty"`
+}
