@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hydra-db/hydra/pubsub"
 	"github.com/hydra-db/hydra/store"
 	grpcserver "github.com/hydra-db/hydra/server/grpc"
 	httpserver "github.com/hydra-db/hydra/server/http"
@@ -21,9 +22,13 @@ func main() {
 	}
 	defer s.Close()
 
+	// Create broadcaster for real-time subscriptions
+	broadcaster := pubsub.NewBroadcaster()
+	s.SetBroadcaster(broadcaster)
+
 	// Create servers
-	httpSrv := httpserver.NewServer(s, 8080)
-	grpcSrv := grpcserver.NewServer(s, 9090)
+	httpSrv := httpserver.NewServer(s, broadcaster, 8080)
+	grpcSrv := grpcserver.NewServer(s, broadcaster, 9090)
 
 	// Start HTTP server in goroutine
 	go func() {
