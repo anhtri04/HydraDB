@@ -4,14 +4,16 @@ import (
 	"sync"
 
 	"github.com/hydra-db/hydra/log"
+	"github.com/hydra-db/hydra/pubsub"
 )
 
 // Store wraps a Log and adds stream indexing with thread-safe access.
 type Store struct {
-	mu       sync.RWMutex
-	log      *log.Log
-	index    map[string][]int64             // StreamID -> list of positions
-	eventIDs map[string]map[string]struct{} // StreamID -> set of eventIDs (for dedup)
+	mu          sync.RWMutex
+	log         *log.Log
+	index       map[string][]int64             // StreamID -> list of positions
+	eventIDs    map[string]map[string]struct{} // StreamID -> set of eventIDs (for dedup)
+	broadcaster *pubsub.Broadcaster
 }
 
 // Open opens or creates a store at the given path.
@@ -67,6 +69,11 @@ func (s *Store) rebuildIndex() error {
 // Close closes the underlying log.
 func (s *Store) Close() error {
 	return s.log.Close()
+}
+
+// SetBroadcaster sets the broadcaster for publishing events
+func (s *Store) SetBroadcaster(b *pubsub.Broadcaster) {
+	s.broadcaster = b
 }
 
 // Append adds an event to a stream with optimistic concurrency control.
@@ -128,6 +135,16 @@ func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion in
 			s.eventIDs[streamID] = make(map[string]struct{})
 		}
 		s.eventIDs[streamID][eventID] = struct{}{}
+	}
+
+	// Notify subscribers
+	if s.broadcaster != nil {
+		s.broadcaster.Publish(pubsub.Event{
+			GlobalPosition: pos,
+			StreamID:       streamID,
+			StreamVersion:  newVersion,
+			Data:           data,
+		})
 	}
 
 	return AppendResult{

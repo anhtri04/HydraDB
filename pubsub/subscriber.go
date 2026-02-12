@@ -1,11 +1,17 @@
 package pubsub
 
-import "github.com/hydra-db/hydra/store"
+// Event represents an event for pub/sub broadcasting
+type Event struct {
+	GlobalPosition int64  // Byte offset in the log file
+	StreamID       string // Which stream this event belongs to
+	StreamVersion  int64  // Version within the stream (0, 1, 2...)
+	Data           []byte // The event payload
+}
 
 // Subscriber represents a single subscription to events
 type Subscriber struct {
 	ID           string
-	EventChan    chan store.Event
+	EventChan    chan Event
 	StreamFilter *string // nil means all streams
 	Done         chan struct{}
 }
@@ -15,7 +21,7 @@ type Subscriber struct {
 func NewSubscriber(id string, streamFilter *string, bufferSize int) *Subscriber {
 	return &Subscriber{
 		ID:           id,
-		EventChan:    make(chan store.Event, bufferSize),
+		EventChan:    make(chan Event, bufferSize),
 		StreamFilter: streamFilter,
 		Done:         make(chan struct{}),
 	}

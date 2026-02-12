@@ -3,8 +3,6 @@ package pubsub
 import (
 	"fmt"
 	"sync"
-
-	"github.com/hydra-db/hydra/store"
 )
 
 // Broadcaster manages subscriptions and broadcasts events
@@ -50,7 +48,7 @@ func (b *Broadcaster) Unsubscribe(id string) {
 
 // Publish sends an event to all matching subscribers
 // Non-blocking: if a subscriber's buffer is full, the event is dropped for that subscriber
-func (b *Broadcaster) Publish(event store.Event) {
+func (b *Broadcaster) Publish(event Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
