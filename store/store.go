@@ -30,3 +30,21 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error {
 	return s.log.Close()
 }
+
+// Append adds an event to a stream and returns its position and version.
+func (s *Store) Append(streamID string, data []byte) (pos int64, version int64, err error) {
+	// Wrap data with StreamID
+	envelope := serializeEnvelope(streamID, data)
+
+	// Write to log
+	pos, err = s.log.Append(envelope)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Update index
+	s.index[streamID] = append(s.index[streamID], pos)
+	version = int64(len(s.index[streamID])) // Version is 1-based count, or use 0-based
+
+	return pos, version - 1, nil // Return 0-based version
+}
