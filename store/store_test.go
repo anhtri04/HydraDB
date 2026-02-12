@@ -279,3 +279,59 @@ func TestAppend_ExpectedVersionStreamExists(t *testing.T) {
 		t.Fatalf("expected success on existing stream, got: %v", err)
 	}
 }
+
+func TestAppend_IdempotentWithSameEventID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// First append
+	result1, err := s.Append("alice", "unique-event-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("first append failed: %v", err)
+	}
+
+	// Second append with SAME eventID should succeed but not write
+	result2, err := s.Append("alice", "unique-event-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("idempotent append should succeed, got: %v", err)
+	}
+
+	// Position should be -1 indicating no new write
+	if result2.Position != -1 {
+		t.Errorf("expected position -1 for idempotent write, got %d", result2.Position)
+	}
+
+	// Version should still be 1
+	if s.StreamVersion("alice") != 1 {
+		t.Errorf("expected version 1, got %d", s.StreamVersion("alice"))
+	}
+
+	// Only one event should exist
+	events, _ := s.ReadStream("alice")
+	if len(events) != 1 {
+		t.Errorf("expected 1 event, got %d", len(events))
+	}
+
+	// Different eventID should write
+	result3, err := s.Append("alice", "different-event-id", []byte("data2"), 1)
+	if err != nil {
+		t.Fatalf("different eventID should succeed: %v", err)
+	}
+	if result3.Position == -1 {
+		t.Error("expected new position for different eventID")
+	}
+
+	// Now should have 2 events
+	if s.StreamVersion("alice") != 2 {
+		t.Errorf("expected version 2, got %d", s.StreamVersion("alice"))
+	}
+
+	// Suppress unused variable warning
+	_ = result1
+}
