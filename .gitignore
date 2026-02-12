@@ -1,2 +1,4 @@
 examples/bank/bank.log
 .worktrees/
+.claude/
+.docs/
