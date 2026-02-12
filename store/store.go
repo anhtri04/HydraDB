@@ -37,7 +37,7 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// rebuildIndex scans the log and populates the index.
+// rebuildIndex scans the log and populates the index and eventIDs.
 func (s *Store) rebuildIndex() error {
 	records, err := s.log.ReadAll()
 	if err != nil {
@@ -45,12 +45,20 @@ func (s *Store) rebuildIndex() error {
 	}
 
 	for _, record := range records {
-		streamID, _, err := deserializeEnvelope(record.Data)
+		streamID, eventID, _, err := deserializeEnvelope(record.Data)
 		if err != nil {
 			// Skip invalid records
 			continue
 		}
 		s.index[streamID] = append(s.index[streamID], record.Position)
+
+		// Track eventID for deduplication
+		if eventID != "" {
+			if s.eventIDs[streamID] == nil {
+				s.eventIDs[streamID] = make(map[string]struct{})
+			}
+			s.eventIDs[streamID][eventID] = struct{}{}
+		}
 	}
 
 	return nil
@@ -64,7 +72,7 @@ func (s *Store) Close() error {
 // Append adds an event to a stream and returns its position and version.
 func (s *Store) Append(streamID string, data []byte) (pos int64, version int64, err error) {
 	// Wrap data with StreamID
-	envelope := serializeEnvelope(streamID, data)
+	envelope := serializeEnvelope(streamID, "", data)
 
 	// Write to log
 	pos, err = s.log.Append(envelope)
@@ -103,7 +111,7 @@ func (s *Store) ReadStream(streamID string) ([]Event, error) {
 			return nil, err
 		}
 
-		sid, data, err := deserializeEnvelope(raw)
+		sid, _, data, err := deserializeEnvelope(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +151,7 @@ func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, err
 			return nil, err
 		}
 
-		sid, data, err := deserializeEnvelope(raw)
+		sid, _, data, err := deserializeEnvelope(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +181,7 @@ func (s *Store) ReadAll() ([]Event, error) {
 
 	events := make([]Event, 0, len(records))
 	for _, record := range records {
-		sid, data, err := deserializeEnvelope(record.Data)
+		sid, _, data, err := deserializeEnvelope(record.Data)
 		if err != nil {
 			continue // Skip invalid records
 		}
