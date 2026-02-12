@@ -48,3 +48,9 @@ func (s *Store) Append(streamID string, data []byte) (pos int64, version int64, 
 
 	return pos, version - 1, nil // Return 0-based version
 }
+
+// StreamVersion returns the current version (event count) for a stream.
+// Returns 0 if the stream doesn't exist.
+func (s *Store) StreamVersion(streamID string) int64 {
+	return int64(len(s.index[streamID]))
+}
