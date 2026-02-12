@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hydra-db/hydra/store"
+	grpcserver "github.com/hydra-db/hydra/server/grpc"
 	httpserver "github.com/hydra-db/hydra/server/http"
 )
 
@@ -18,17 +21,41 @@ func main() {
 	}
 	defer s.Close()
 
-	// Create and start HTTP server
+	// Create servers
 	httpSrv := httpserver.NewServer(s, 8080)
+	grpcSrv := grpcserver.NewServer(s, 9090)
 
-	// Handle shutdown
+	// Start HTTP server in goroutine
 	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		log.Println("Shutting down...")
-		os.Exit(0)
+		if err := httpSrv.Start(); err != nil {
+			log.Printf("HTTP server error: %v", err)
+		}
 	}()
 
-	log.Fatal(httpSrv.Start())
+	// Start gRPC server in goroutine
+	go func() {
+		if err := grpcSrv.Start(); err != nil {
+			log.Printf("gRPC server error: %v", err)
+		}
+	}()
+
+	log.Println("Hydra Event Store started")
+	log.Println("  HTTP: http://localhost:8080")
+	log.Println("  gRPC: localhost:9090")
+
+	// Handle shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	log.Println("Shutting down...")
+
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	httpSrv.Shutdown(ctx)
+	grpcSrv.Stop()
+
+	log.Println("Shutdown complete")
 }
