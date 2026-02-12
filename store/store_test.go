@@ -188,8 +188,8 @@ func TestAppend_RejectsWrongExpectedVersion(t *testing.T) {
 		t.Fatalf("failed to append: %v", err)
 	}
 
-	// Try to append with wrong expected version (expecting 0, but it's 1)
-	_, err = s.Append("alice", "event-2", []byte("data2"), 0)
+	// Try to append with wrong expected version (expecting 5, but it's 1)
+	_, err = s.Append("alice", "event-2", []byte("data2"), 5)
 	if err != store.ErrWrongExpectedVersion {
 		t.Errorf("expected ErrWrongExpectedVersion, got %v", err)
 	}
