@@ -82,11 +82,15 @@ func (s *Store) Append(streamID string, data []byte) (pos int64, version int64, 
 // StreamVersion returns the current version (event count) for a stream.
 // Returns 0 if the stream doesn't exist.
 func (s *Store) StreamVersion(streamID string) int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return int64(len(s.index[streamID]))
 }
 
 // ReadStream returns all events for a stream in version order.
 func (s *Store) ReadStream(streamID string) ([]Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	positions, exists := s.index[streamID]
 	if !exists {
 		return nil, nil // Stream doesn't exist, return empty
@@ -117,6 +121,8 @@ func (s *Store) ReadStream(streamID string) ([]Event, error) {
 
 // ReadStreamFrom returns events for a stream starting from the given version.
 func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	positions, exists := s.index[streamID]
 	if !exists {
 		return nil, nil
@@ -155,6 +161,8 @@ func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, err
 
 // ReadAll returns all events in global (insertion) order.
 func (s *Store) ReadAll() ([]Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	records, err := s.log.ReadAll()
 	if err != nil {
 		return nil, err
