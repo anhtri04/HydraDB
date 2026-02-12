@@ -8,7 +8,34 @@ import (
 var (
 	// ErrInvalidEvent indicates the event data is malformed
 	ErrInvalidEvent = errors.New("invalid event format")
+
+	// ErrWrongExpectedVersion is returned when optimistic concurrency check fails
+	ErrWrongExpectedVersion = errors.New("wrong expected version")
+
+	// ErrStreamExists is returned when creating a stream that already exists
+	ErrStreamExists = errors.New("stream already exists")
+
+	// ErrStreamNotFound is returned when stream doesn't exist but should
+	ErrStreamNotFound = errors.New("stream not found")
 )
+
+// ExpectedVersion constants for optimistic concurrency control
+const (
+	// ExpectedVersionAny allows append regardless of current version
+	ExpectedVersionAny int64 = -1
+
+	// ExpectedVersionNoStream requires the stream to not exist (for creation)
+	ExpectedVersionNoStream int64 = 0
+
+	// ExpectedVersionStreamExists requires the stream to exist (any version)
+	ExpectedVersionStreamExists int64 = -2
+)
+
+// AppendResult contains the result of a successful append operation
+type AppendResult struct {
+	Position int64 // Byte offset in the log file
+	Version  int64 // New stream version after append
+}
 
 // Event represents a stored event with its metadata.
 type Event struct {
