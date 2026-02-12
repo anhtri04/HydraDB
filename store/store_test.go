@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -18,9 +19,9 @@ func TestStore_RebuildIndexOnOpen(t *testing.T) {
 	}
 
 	// Append events to different streams
-	s.Append("alice", []byte("event1"))
-	s.Append("alice", []byte("event2"))
-	s.Append("bob", []byte("event3"))
+	_, _ = s.Append("alice", "e1", []byte("event1"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e2", []byte("event2"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e3", []byte("event3"), store.ExpectedVersionAny)
 	s.Close()
 
 	// Reopen - should rebuild index
@@ -53,11 +54,11 @@ func TestStore_ReadStream(t *testing.T) {
 	defer s.Close()
 
 	// Append events to multiple streams
-	s.Append("alice", []byte("alice-event-0"))
-	s.Append("bob", []byte("bob-event-0"))
-	s.Append("alice", []byte("alice-event-1"))
-	s.Append("alice", []byte("alice-event-2"))
-	s.Append("bob", []byte("bob-event-1"))
+	_, _ = s.Append("alice", "e1", []byte("alice-event-0"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e2", []byte("bob-event-0"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e3", []byte("alice-event-1"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e4", []byte("alice-event-2"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e5", []byte("bob-event-1"), store.ExpectedVersionAny)
 
 	// Read alice's stream
 	events, err := s.ReadStream("alice")
@@ -104,7 +105,7 @@ func TestStore_ReadStreamFrom(t *testing.T) {
 
 	// Append 5 events
 	for i := 0; i < 5; i++ {
-		s.Append("alice", []byte("event"))
+		_, _ = s.Append("alice", fmt.Sprintf("e%d", i), []byte("event"), store.ExpectedVersionAny)
 	}
 
 	// Read from version 2 onwards
@@ -137,9 +138,9 @@ func TestStore_ReadAll(t *testing.T) {
 	defer s.Close()
 
 	// Append events to multiple streams
-	s.Append("alice", []byte("a1"))
-	s.Append("bob", []byte("b1"))
-	s.Append("alice", []byte("a2"))
+	_, _ = s.Append("alice", "e1", []byte("a1"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e2", []byte("b1"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e3", []byte("a2"), store.ExpectedVersionAny)
 
 	// Read all events in global order
 	events, err := s.ReadAll()
