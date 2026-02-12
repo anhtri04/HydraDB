@@ -109,3 +109,41 @@ func (s *Store) ReadStream(streamID string) ([]Event, error) {
 
 	return events, nil
 }
+
+// ReadStreamFrom returns events for a stream starting from the given version.
+func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, error) {
+	positions, exists := s.index[streamID]
+	if !exists {
+		return nil, nil
+	}
+
+	if fromVersion < 0 {
+		fromVersion = 0
+	}
+	if fromVersion >= int64(len(positions)) {
+		return nil, nil // No events from this version
+	}
+
+	events := make([]Event, 0, len(positions)-int(fromVersion))
+	for i := int(fromVersion); i < len(positions); i++ {
+		pos := positions[i]
+		raw, err := s.log.ReadAt(pos)
+		if err != nil {
+			return nil, err
+		}
+
+		sid, data, err := deserializeEnvelope(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		events = append(events, Event{
+			GlobalPosition: pos,
+			StreamID:       sid,
+			StreamVersion:  int64(i),
+			Data:           data,
+		})
+	}
+
+	return events, nil
+}
