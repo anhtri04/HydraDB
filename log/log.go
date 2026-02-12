@@ -23,6 +23,12 @@ var byteOrder = binary.BigEndian
 // ErrCorruptRecord indicates a record failed checksum validation
 var ErrCorruptRecord = errors.New("corrupt record: checksum mismatch")
 
+// Record represents a single entry in the log with its position.
+type Record struct {
+	Position int64  // Byte offset in the file
+	Data     []byte // The record payload
+}
+
 // Log is an append-only log that stores records in a file.
 // Each record is stored as: [4-byte length][4-byte CRC32][data]
 type Log struct {
