@@ -138,3 +138,38 @@ func TestReadAt_DetectsCorruption(t *testing.T) {
 		t.Errorf("expected ErrCorruptRecord, got %v", err)
 	}
 }
+
+func TestReadAll_ReturnsAllRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	l, err := log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open log: %v", err)
+	}
+	defer l.Close()
+
+	// Append multiple records
+	expected := []string{"one", "two", "three"}
+	for _, s := range expected {
+		if _, err := l.Append([]byte(s)); err != nil {
+			t.Fatalf("failed to append: %v", err)
+		}
+	}
+
+	// Read all
+	records, err := l.ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read all: %v", err)
+	}
+
+	if len(records) != len(expected) {
+		t.Fatalf("expected %d records, got %d", len(expected), len(records))
+	}
+
+	for i, r := range records {
+		if string(r.Data) != expected[i] {
+			t.Errorf("record %d: expected '%s', got '%s'", i, expected[i], string(r.Data))
+		}
+	}
+}
