@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/hydra-db/hydra/log"
+	"github.com/hydra-db/hydra/store"
 )
 
 const dataFile = "bank.log"
@@ -110,16 +110,15 @@ func printUsage() {
 }
 
 func openAccount(accountID, owner string) {
-	l, err := log.Open(dataFile)
+	s, err := store.Open(dataFile)
 	if err != nil {
-		fmt.Printf("Failed to open log: %v\n", err)
+		fmt.Printf("Failed to open store: %v\n", err)
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer s.Close()
 
-	// Check if account already exists
-	account := replayAccount(l, accountID)
-	if account.Exists {
+	// Check if account already exists (stream has events)
+	if s.StreamVersion(accountID) > 0 {
 		fmt.Printf("Account %s already exists\n", accountID)
 		os.Exit(1)
 	}
@@ -137,13 +136,13 @@ func openAccount(accountID, owner string) {
 		os.Exit(1)
 	}
 
-	pos, err := l.Append(data)
+	pos, version, err := s.Append(accountID, data)
 	if err != nil {
 		fmt.Printf("Failed to append event: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Account %s opened for %s (stored at position %d)\n", accountID, owner, pos)
+	fmt.Printf("Account %s opened for %s (position=%d, version=%d)\n", accountID, owner, pos, version)
 }
 
 func deposit(accountID string, amount int64, note string) {
@@ -152,15 +151,15 @@ func deposit(accountID string, amount int64, note string) {
 		os.Exit(1)
 	}
 
-	l, err := log.Open(dataFile)
+	s, err := store.Open(dataFile)
 	if err != nil {
-		fmt.Printf("Failed to open log: %v\n", err)
+		fmt.Printf("Failed to open store: %v\n", err)
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer s.Close()
 
 	// Check if account exists
-	account := replayAccount(l, accountID)
+	account := replayAccount(s, accountID)
 	if !account.Exists {
 		fmt.Printf("Account %s does not exist. Open it first.\n", accountID)
 		os.Exit(1)
@@ -179,14 +178,14 @@ func deposit(accountID string, amount int64, note string) {
 		os.Exit(1)
 	}
 
-	pos, err := l.Append(data)
+	pos, version, err := s.Append(accountID, data)
 	if err != nil {
 		fmt.Printf("Failed to append event: %v\n", err)
 		os.Exit(1)
 	}
 
 	newBalance := account.Balance + amount
-	fmt.Printf("Deposited $%d to %s (new balance: $%d, stored at position %d)\n", amount, accountID, newBalance, pos)
+	fmt.Printf("Deposited $%d to %s (balance=$%d, position=%d, version=%d)\n", amount, accountID, newBalance, pos, version)
 }
 
 func withdraw(accountID string, amount int64, note string) {
@@ -195,15 +194,15 @@ func withdraw(accountID string, amount int64, note string) {
 		os.Exit(1)
 	}
 
-	l, err := log.Open(dataFile)
+	s, err := store.Open(dataFile)
 	if err != nil {
-		fmt.Printf("Failed to open log: %v\n", err)
+		fmt.Printf("Failed to open store: %v\n", err)
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer s.Close()
 
 	// Check if account exists and has sufficient balance
-	account := replayAccount(l, accountID)
+	account := replayAccount(s, accountID)
 	if !account.Exists {
 		fmt.Printf("Account %s does not exist. Open it first.\n", accountID)
 		os.Exit(1)
@@ -226,108 +225,105 @@ func withdraw(accountID string, amount int64, note string) {
 		os.Exit(1)
 	}
 
-	pos, err := l.Append(data)
+	pos, version, err := s.Append(accountID, data)
 	if err != nil {
 		fmt.Printf("Failed to append event: %v\n", err)
 		os.Exit(1)
 	}
 
 	newBalance := account.Balance - amount
-	fmt.Printf("Withdrew $%d from %s (new balance: $%d, stored at position %d)\n", amount, accountID, newBalance, pos)
+	fmt.Printf("Withdrew $%d from %s (balance=$%d, position=%d, version=%d)\n", amount, accountID, newBalance, pos, version)
 }
 
 func showBalance(accountID string) {
-	l, err := log.Open(dataFile)
+	s, err := store.Open(dataFile)
 	if err != nil {
-		fmt.Printf("Failed to open log: %v\n", err)
+		fmt.Printf("Failed to open store: %v\n", err)
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer s.Close()
 
-	account := replayAccount(l, accountID)
+	account := replayAccount(s, accountID)
 	fmt.Println(account.String())
 }
 
 func showHistory(accountID string) {
-	l, err := log.Open(dataFile)
+	s, err := store.Open(dataFile)
 	if err != nil {
-		fmt.Printf("Failed to open log: %v\n", err)
+		fmt.Printf("Failed to open store: %v\n", err)
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer s.Close()
 
-	records, err := l.ReadAll()
+	// Use ReadStream - efficient O(k) lookup!
+	events, err := s.ReadStream(accountID)
 	if err != nil {
-		fmt.Printf("Failed to read log: %v\n", err)
+		fmt.Printf("Failed to read stream: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Event history for account %s:\n", accountID)
 	fmt.Println("---")
 
-	count := 0
-	for _, record := range records {
-		event, err := DeserializeEvent(record.Data)
+	for _, e := range events {
+		event, err := DeserializeEvent(e.Data)
 		if err != nil {
 			continue
 		}
-		if event.AccountID == accountID {
-			fmt.Printf("  %s\n", event.String())
-			count++
-		}
+		fmt.Printf("  v%d: %s\n", e.StreamVersion, event.String())
 	}
 
-	if count == 0 {
+	if len(events) == 0 {
 		fmt.Println("  (no events found)")
 	}
 	fmt.Println("---")
-	fmt.Printf("Total: %d events\n", count)
+	fmt.Printf("Total: %d events (current version: %d)\n", len(events), len(events))
 }
 
 func showAllEvents() {
-	l, err := log.Open(dataFile)
+	s, err := store.Open(dataFile)
 	if err != nil {
-		fmt.Printf("Failed to open log: %v\n", err)
+		fmt.Printf("Failed to open store: %v\n", err)
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer s.Close()
 
-	records, err := l.ReadAll()
+	events, err := s.ReadAll()
 	if err != nil {
-		fmt.Printf("Failed to read log: %v\n", err)
+		fmt.Printf("Failed to read all: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("All events in the log:")
+	fmt.Println("All events in the store:")
 	fmt.Println("---")
 
-	for i, record := range records {
-		event, err := DeserializeEvent(record.Data)
+	for i, e := range events {
+		event, err := DeserializeEvent(e.Data)
 		if err != nil {
-			fmt.Printf("  #%d [pos=%d] <corrupt or invalid>\n", i+1, record.Position)
+			fmt.Printf("  #%d [pos=%d] <invalid>\n", i+1, e.GlobalPosition)
 			continue
 		}
-		fmt.Printf("  #%d [pos=%d] [%s] %s\n", i+1, record.Position, event.AccountID, event.String())
+		fmt.Printf("  #%d [pos=%d] [%s:v%d] %s\n", i+1, e.GlobalPosition, e.StreamID, e.StreamVersion, event.String())
 	}
 
-	if len(records) == 0 {
+	if len(events) == 0 {
 		fmt.Println("  (no events)")
 	}
 	fmt.Println("---")
-	fmt.Printf("Total: %d events\n", len(records))
+	fmt.Printf("Total: %d events\n", len(events))
 }
 
 func showStats() {
-	l, err := log.Open(dataFile)
+	s, err := store.Open(dataFile)
 	if err != nil {
-		fmt.Printf("Failed to open log: %v\n", err)
+		fmt.Printf("Failed to open store: %v\n", err)
 		os.Exit(1)
 	}
-	defer l.Close()
+	defer s.Close()
 
-	records, err := l.ReadAll()
+	events, err := s.ReadAll()
 	if err != nil {
-		fmt.Printf("Failed to read log: %v\n", err)
+		fmt.Printf("Failed to read all: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -335,45 +331,42 @@ func showStats() {
 	accounts := make(map[string]int)
 	eventTypes := make(map[EventType]int)
 
-	var totalBytes int64 = 0
-	for _, record := range records {
-		totalBytes += int64(log.HeaderSize + len(record.Data))
-		event, err := DeserializeEvent(record.Data)
+	for _, e := range events {
+		accounts[e.StreamID]++
+		event, err := DeserializeEvent(e.Data)
 		if err != nil {
 			continue
 		}
-		accounts[event.AccountID]++
 		eventTypes[event.Type]++
 	}
 
-	fmt.Println("Log Statistics:")
+	fmt.Println("Store Statistics:")
 	fmt.Println("---")
-	fmt.Printf("Total events: %d\n", len(records))
-	fmt.Printf("Total size: %d bytes\n", totalBytes)
+	fmt.Printf("Total events: %d\n", len(events))
 	fmt.Println()
 	fmt.Println("Events by type:")
 	for t, count := range eventTypes {
 		fmt.Printf("  %s: %d\n", t, count)
 	}
 	fmt.Println()
-	fmt.Println("Events by account:")
+	fmt.Println("Events by account (stream):")
 	for acc, count := range accounts {
-		fmt.Printf("  %s: %d\n", acc, count)
+		fmt.Printf("  %s: %d events (version %d)\n", acc, count, count)
 	}
 }
 
-// replayAccount rebuilds account state by replaying all events
-// NOTE: In Phase 1, we scan ALL events. Phase 2 will add indexing for efficiency.
-func replayAccount(l *log.Log, accountID string) *Account {
+// replayAccount rebuilds account state by replaying stream events.
+// NOW EFFICIENT: Uses ReadStream which is O(k) not O(n)!
+func replayAccount(s *store.Store, accountID string) *Account {
 	account := &Account{ID: accountID}
 
-	records, err := l.ReadAll()
+	events, err := s.ReadStream(accountID)
 	if err != nil {
 		return account
 	}
 
-	for _, record := range records {
-		event, err := DeserializeEvent(record.Data)
+	for _, e := range events {
+		event, err := DeserializeEvent(e.Data)
 		if err != nil {
 			continue
 		}
