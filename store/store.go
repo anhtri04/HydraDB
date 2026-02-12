@@ -23,7 +23,32 @@ func Open(path string) (*Store, error) {
 		index: make(map[string][]int64),
 	}
 
+	// Rebuild index from existing data
+	if err := s.rebuildIndex(); err != nil {
+		l.Close()
+		return nil, err
+	}
+
 	return s, nil
+}
+
+// rebuildIndex scans the log and populates the index.
+func (s *Store) rebuildIndex() error {
+	records, err := s.log.ReadAll()
+	if err != nil {
+		return err
+	}
+
+	for _, record := range records {
+		streamID, _, err := deserializeEnvelope(record.Data)
+		if err != nil {
+			// Skip invalid records
+			continue
+		}
+		s.index[streamID] = append(s.index[streamID], record.Position)
+	}
+
+	return nil
 }
 
 // Close closes the underlying log.
