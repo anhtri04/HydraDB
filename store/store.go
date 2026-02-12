@@ -79,3 +79,33 @@ func (s *Store) Append(streamID string, data []byte) (pos int64, version int64, 
 func (s *Store) StreamVersion(streamID string) int64 {
 	return int64(len(s.index[streamID]))
 }
+
+// ReadStream returns all events for a stream in version order.
+func (s *Store) ReadStream(streamID string) ([]Event, error) {
+	positions, exists := s.index[streamID]
+	if !exists {
+		return nil, nil // Stream doesn't exist, return empty
+	}
+
+	events := make([]Event, 0, len(positions))
+	for i, pos := range positions {
+		raw, err := s.log.ReadAt(pos)
+		if err != nil {
+			return nil, err
+		}
+
+		sid, data, err := deserializeEnvelope(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		events = append(events, Event{
+			GlobalPosition: pos,
+			StreamID:       sid,
+			StreamVersion:  int64(i),
+			Data:           data,
+		})
+	}
+
+	return events, nil
+}
