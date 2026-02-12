@@ -1,6 +1,7 @@
 package log_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -96,5 +97,44 @@ func TestReadAt_ReadsRecordAtPosition(t *testing.T) {
 
 	if string(data) != "second" {
 		t.Errorf("expected 'second', got '%s'", string(data))
+	}
+}
+
+func TestReadAt_DetectsCorruption(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	// Write a valid record
+	l, err := log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open log: %v", err)
+	}
+
+	pos, err := l.Append([]byte("hello"))
+	if err != nil {
+		t.Fatalf("failed to append: %v", err)
+	}
+	l.Close()
+
+	// Corrupt the data (byte after header)
+	f, err := os.OpenFile(path, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatalf("failed to open file: %v", err)
+	}
+	// Seek past header (8 bytes) and corrupt first data byte
+	f.Seek(int64(log.HeaderSize), 0)
+	f.Write([]byte{0xFF}) // Corrupt the data
+	f.Close()
+
+	// Reopen and try to read
+	l, err = log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to reopen log: %v", err)
+	}
+	defer l.Close()
+
+	_, err = l.ReadAt(pos)
+	if err != log.ErrCorruptRecord {
+		t.Errorf("expected ErrCorruptRecord, got %v", err)
 	}
 }
