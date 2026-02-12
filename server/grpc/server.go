@@ -11,23 +11,26 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/hydra-db/hydra/server/grpc/proto"
+	"github.com/hydra-db/hydra/pubsub"
 	"github.com/hydra-db/hydra/store"
 )
 
 // Server is the gRPC server for the event store
 type Server struct {
 	pb.UnimplementedEventStoreServer
-	store      *store.Store
-	grpcServer *grpc.Server
-	port       int
+	store       *store.Store
+	broadcaster *pubsub.Broadcaster
+	grpcServer  *grpc.Server
+	port        int
 }
 
 // NewServer creates a new gRPC server
-func NewServer(s *store.Store, port int) *Server {
+func NewServer(s *store.Store, b *pubsub.Broadcaster, port int) *Server {
 	return &Server{
-		store:      s,
-		grpcServer: grpc.NewServer(),
-		port:       port,
+		store:       s,
+		broadcaster: b,
+		grpcServer:  grpc.NewServer(),
+		port:        port,
 	}
 }
 
@@ -129,4 +132,115 @@ func (s *Server) ReadAll(req *pb.ReadAllRequest, stream pb.EventStore_ReadAllSer
 	}
 
 	return nil
+}
+
+// SubscribeToAll implements catch-up + live subscription to all events
+func (s *Server) SubscribeToAll(req *pb.SubscribeToAllRequest, stream pb.EventStore_SubscribeToAllServer) error {
+	// Subscribe to live events
+	sub := s.broadcaster.Subscribe(nil, 1000)
+	defer s.broadcaster.Unsubscribe(sub.ID)
+
+	// Phase 1: Catch-up
+	events, err := s.store.ReadAll()
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to read events: %v", err)
+	}
+
+	var lastPosition int64 = -1
+	for _, event := range events {
+		if event.GlobalPosition < req.FromPosition {
+			continue
+		}
+		if err := stream.Send(&pb.Event{
+			Position: event.GlobalPosition,
+			StreamId: event.StreamID,
+			Version:  event.StreamVersion,
+			Data:     event.Data,
+		}); err != nil {
+			return err
+		}
+		lastPosition = event.GlobalPosition
+	}
+
+	// Phase 2: Live
+	for {
+		select {
+		case event, ok := <-sub.EventChan:
+			if !ok {
+				return nil
+			}
+			if event.GlobalPosition <= lastPosition {
+				continue
+			}
+			if err := stream.Send(&pb.Event{
+				Position: event.GlobalPosition,
+				StreamId: event.StreamID,
+				Version:  event.StreamVersion,
+				Data:     event.Data,
+			}); err != nil {
+				return err
+			}
+			lastPosition = event.GlobalPosition
+
+		case <-stream.Context().Done():
+			return nil
+		}
+	}
+}
+
+// SubscribeToStream implements catch-up + live subscription to a specific stream
+func (s *Server) SubscribeToStream(req *pb.SubscribeToStreamRequest, stream pb.EventStore_SubscribeToStreamServer) error {
+	// Subscribe to live events for this stream
+	sub := s.broadcaster.Subscribe(&req.StreamId, 1000)
+	defer s.broadcaster.Unsubscribe(sub.ID)
+
+	// Phase 1: Catch-up
+	var events []store.Event
+	var err error
+	if req.FromVersion > 0 {
+		events, err = s.store.ReadStreamFrom(req.StreamId, req.FromVersion)
+	} else {
+		events, err = s.store.ReadStream(req.StreamId)
+	}
+	if err != nil {
+		return status.Errorf(codes.Internal, "failed to read stream: %v", err)
+	}
+
+	var lastVersion int64 = req.FromVersion - 1
+	for _, event := range events {
+		if err := stream.Send(&pb.Event{
+			Position: event.GlobalPosition,
+			StreamId: event.StreamID,
+			Version:  event.StreamVersion,
+			Data:     event.Data,
+		}); err != nil {
+			return err
+		}
+		lastVersion = event.StreamVersion
+	}
+
+	// Phase 2: Live
+	for {
+		select {
+		case event, ok := <-sub.EventChan:
+			if !ok {
+				return nil
+			}
+			if event.StreamVersion <= lastVersion {
+				continue
+			}
+			if err := stream.Send(&pb.Event{
+				Position: event.GlobalPosition,
+				StreamId: event.StreamID,
+				Version:  event.StreamVersion,
+				Data:     event.Data,
+			}); err != nil {
+				return err
+			}
+			lastVersion = event.StreamVersion
+
+		case <-stream.Context().Done():
+			return nil
+		}
+	}
 }
