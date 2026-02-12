@@ -66,3 +66,35 @@ func TestAppend_ReturnsCorrectPositionForMultipleRecords(t *testing.T) {
 		t.Errorf("expected pos2=%d, got %d", expectedPos2, pos2)
 	}
 }
+
+func TestReadAt_ReadsRecordAtPosition(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	l, err := log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open log: %v", err)
+	}
+	defer l.Close()
+
+	// Append two records
+	_, err = l.Append([]byte("first"))
+	if err != nil {
+		t.Fatalf("failed to append: %v", err)
+	}
+
+	pos2, err := l.Append([]byte("second"))
+	if err != nil {
+		t.Fatalf("failed to append: %v", err)
+	}
+
+	// Read the second record
+	data, err := l.ReadAt(pos2)
+	if err != nil {
+		t.Fatalf("failed to read at %d: %v", pos2, err)
+	}
+
+	if string(data) != "second" {
+		t.Errorf("expected 'second', got '%s'", string(data))
+	}
+}
