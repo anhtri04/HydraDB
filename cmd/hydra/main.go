@@ -27,8 +27,8 @@ func main() {
 	s.SetBroadcaster(broadcaster)
 
 	// Create servers
-	httpSrv := httpserver.NewServer(s, 8080)
-	grpcSrv := grpcserver.NewServer(s, 9090)
+	httpSrv := httpserver.NewServer(s, broadcaster, 8080)
+	grpcSrv := grpcserver.NewServer(s, broadcaster, 9090)
 
 	// Start HTTP server in goroutine
 	go func() {
