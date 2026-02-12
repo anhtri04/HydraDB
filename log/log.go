@@ -2,6 +2,8 @@ package log
 
 import (
 	"encoding/binary"
+	"hash/crc32"
+	"io"
 	"os"
 )
 
@@ -35,4 +37,40 @@ func Open(path string) (*Log, error) {
 // Close closes the log file.
 func (l *Log) Close() error {
 	return l.file.Close()
+}
+
+// Append writes a record to the log and returns its byte position.
+// The record is stored as: [4-byte length][4-byte CRC32][data]
+func (l *Log) Append(data []byte) (pos int64, err error) {
+	// Get current position (end of file)
+	pos, err = l.file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, err
+	}
+
+	// Build the record: [length][checksum][data]
+	length := uint32(len(data))
+	checksum := crc32.ChecksumIEEE(data)
+
+	// Write length
+	if err := binary.Write(l.file, byteOrder, length); err != nil {
+		return 0, err
+	}
+
+	// Write checksum
+	if err := binary.Write(l.file, byteOrder, checksum); err != nil {
+		return 0, err
+	}
+
+	// Write data
+	if _, err := l.file.Write(data); err != nil {
+		return 0, err
+	}
+
+	// Sync to disk for durability
+	if err := l.file.Sync(); err != nil {
+		return 0, err
+	}
+
+	return pos, nil
 }
