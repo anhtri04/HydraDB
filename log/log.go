@@ -2,6 +2,7 @@ package log
 
 import (
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"io"
 	"os"
@@ -18,6 +19,9 @@ const (
 
 // byteOrder defines the byte order for encoding integers
 var byteOrder = binary.BigEndian
+
+// ErrCorruptRecord indicates a record failed checksum validation
+var ErrCorruptRecord = errors.New("corrupt record: checksum mismatch")
 
 // Log is an append-only log that stores records in a file.
 // Each record is stored as: [4-byte length][4-byte CRC32][data]
@@ -73,4 +77,39 @@ func (l *Log) Append(data []byte) (pos int64, err error) {
 	}
 
 	return pos, nil
+}
+
+// ReadAt reads a single record at the given byte position.
+// Returns ErrCorruptRecord if the checksum doesn't match.
+func (l *Log) ReadAt(pos int64) ([]byte, error) {
+	// Seek to position
+	if _, err := l.file.Seek(pos, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	// Read length
+	var length uint32
+	if err := binary.Read(l.file, byteOrder, &length); err != nil {
+		return nil, err
+	}
+
+	// Read stored checksum
+	var storedChecksum uint32
+	if err := binary.Read(l.file, byteOrder, &storedChecksum); err != nil {
+		return nil, err
+	}
+
+	// Read data
+	data := make([]byte, length)
+	if _, err := io.ReadFull(l.file, data); err != nil {
+		return nil, err
+	}
+
+	// Verify checksum
+	computedChecksum := crc32.ChecksumIEEE(data)
+	if computedChecksum != storedChecksum {
+		return nil, ErrCorruptRecord
+	}
+
+	return data, nil
 }
