@@ -125,3 +125,48 @@ func TestStore_ReadStreamFrom(t *testing.T) {
 		}
 	}
 }
+
+func TestStore_ReadAll(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append events to multiple streams
+	s.Append("alice", []byte("a1"))
+	s.Append("bob", []byte("b1"))
+	s.Append("alice", []byte("a2"))
+
+	// Read all events in global order
+	events, err := s.ReadAll()
+	if err != nil {
+		t.Fatalf("failed to read all: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// Verify global order (by position)
+	expected := []struct {
+		streamID string
+		data     string
+	}{
+		{"alice", "a1"},
+		{"bob", "b1"},
+		{"alice", "a2"},
+	}
+
+	for i, e := range events {
+		if e.StreamID != expected[i].streamID {
+			t.Errorf("event %d: expected streamID '%s', got '%s'", i, expected[i].streamID, e.StreamID)
+		}
+		if string(e.Data) != expected[i].data {
+			t.Errorf("event %d: expected data '%s', got '%s'", i, expected[i].data, string(e.Data))
+		}
+	}
+}
