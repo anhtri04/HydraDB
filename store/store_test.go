@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -18,9 +19,9 @@ func TestStore_RebuildIndexOnOpen(t *testing.T) {
 	}
 
 	// Append events to different streams
-	s.Append("alice", []byte("event1"))
-	s.Append("alice", []byte("event2"))
-	s.Append("bob", []byte("event3"))
+	_, _ = s.Append("alice", "e1", []byte("event1"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e2", []byte("event2"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e3", []byte("event3"), store.ExpectedVersionAny)
 	s.Close()
 
 	// Reopen - should rebuild index
@@ -53,11 +54,11 @@ func TestStore_ReadStream(t *testing.T) {
 	defer s.Close()
 
 	// Append events to multiple streams
-	s.Append("alice", []byte("alice-event-0"))
-	s.Append("bob", []byte("bob-event-0"))
-	s.Append("alice", []byte("alice-event-1"))
-	s.Append("alice", []byte("alice-event-2"))
-	s.Append("bob", []byte("bob-event-1"))
+	_, _ = s.Append("alice", "e1", []byte("alice-event-0"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e2", []byte("bob-event-0"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e3", []byte("alice-event-1"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e4", []byte("alice-event-2"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e5", []byte("bob-event-1"), store.ExpectedVersionAny)
 
 	// Read alice's stream
 	events, err := s.ReadStream("alice")
@@ -104,7 +105,7 @@ func TestStore_ReadStreamFrom(t *testing.T) {
 
 	// Append 5 events
 	for i := 0; i < 5; i++ {
-		s.Append("alice", []byte("event"))
+		_, _ = s.Append("alice", fmt.Sprintf("e%d", i), []byte("event"), store.ExpectedVersionAny)
 	}
 
 	// Read from version 2 onwards
@@ -137,9 +138,9 @@ func TestStore_ReadAll(t *testing.T) {
 	defer s.Close()
 
 	// Append events to multiple streams
-	s.Append("alice", []byte("a1"))
-	s.Append("bob", []byte("b1"))
-	s.Append("alice", []byte("a2"))
+	_, _ = s.Append("alice", "e1", []byte("a1"), store.ExpectedVersionAny)
+	_, _ = s.Append("bob", "e2", []byte("b1"), store.ExpectedVersionAny)
+	_, _ = s.Append("alice", "e3", []byte("a2"), store.ExpectedVersionAny)
 
 	// Read all events in global order
 	events, err := s.ReadAll()
@@ -168,5 +169,263 @@ func TestStore_ReadAll(t *testing.T) {
 		if string(e.Data) != expected[i].data {
 			t.Errorf("event %d: expected data '%s', got '%s'", i, expected[i].data, string(e.Data))
 		}
+	}
+}
+
+func TestAppend_RejectsWrongExpectedVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append first event (version becomes 1)
+	_, err = s.Append("alice", "event-1", []byte("data1"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("failed to append: %v", err)
+	}
+
+	// Try to append with wrong expected version (expecting 5, but it's 1)
+	_, err = s.Append("alice", "event-2", []byte("data2"), 5)
+	if err != store.ErrWrongExpectedVersion {
+		t.Errorf("expected ErrWrongExpectedVersion, got %v", err)
+	}
+
+	// Append with correct expected version should work
+	result, err := s.Append("alice", "event-2", []byte("data2"), 1)
+	if err != nil {
+		t.Fatalf("failed to append with correct version: %v", err)
+	}
+	if result.Version != 1 { // 0-indexed, so second event is version 1
+		t.Errorf("expected version 1, got %d", result.Version)
+	}
+}
+
+func TestAppend_ExpectedVersionAnyAlwaysSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append with Any to non-existent stream
+	_, err = s.Append("alice", "e1", []byte("data1"), store.ExpectedVersionAny)
+	if err != nil {
+		t.Fatalf("expected success with Any on new stream, got: %v", err)
+	}
+
+	// Append with Any to existing stream
+	_, err = s.Append("alice", "e2", []byte("data2"), store.ExpectedVersionAny)
+	if err != nil {
+		t.Fatalf("expected success with Any on existing stream, got: %v", err)
+	}
+
+	if v := s.StreamVersion("alice"); v != 2 {
+		t.Errorf("expected version 2, got %d", v)
+	}
+}
+
+func TestAppend_ExpectedVersionNoStream(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// NoStream on new stream should succeed
+	_, err = s.Append("alice", "e1", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("expected success on new stream, got: %v", err)
+	}
+
+	// NoStream on existing stream should fail
+	_, err = s.Append("alice", "e2", []byte("data"), store.ExpectedVersionNoStream)
+	if err != store.ErrStreamExists {
+		t.Errorf("expected ErrStreamExists, got: %v", err)
+	}
+}
+
+func TestAppend_ExpectedVersionStreamExists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// StreamExists on new stream should fail
+	_, err = s.Append("alice", "e1", []byte("data"), store.ExpectedVersionStreamExists)
+	if err != store.ErrStreamNotFound {
+		t.Errorf("expected ErrStreamNotFound, got: %v", err)
+	}
+
+	// Create the stream
+	_, _ = s.Append("alice", "e1", []byte("data"), store.ExpectedVersionAny)
+
+	// StreamExists on existing stream should succeed
+	_, err = s.Append("alice", "e2", []byte("data"), store.ExpectedVersionStreamExists)
+	if err != nil {
+		t.Fatalf("expected success on existing stream, got: %v", err)
+	}
+}
+
+func TestAppend_IdempotentWithSameEventID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// First append
+	result1, err := s.Append("alice", "unique-event-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("first append failed: %v", err)
+	}
+
+	// Second append with SAME eventID should succeed but not write
+	result2, err := s.Append("alice", "unique-event-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("idempotent append should succeed, got: %v", err)
+	}
+
+	// Position should be -1 indicating no new write
+	if result2.Position != -1 {
+		t.Errorf("expected position -1 for idempotent write, got %d", result2.Position)
+	}
+
+	// Version should still be 1
+	if s.StreamVersion("alice") != 1 {
+		t.Errorf("expected version 1, got %d", s.StreamVersion("alice"))
+	}
+
+	// Only one event should exist
+	events, _ := s.ReadStream("alice")
+	if len(events) != 1 {
+		t.Errorf("expected 1 event, got %d", len(events))
+	}
+
+	// Different eventID should write
+	result3, err := s.Append("alice", "different-event-id", []byte("data2"), 1)
+	if err != nil {
+		t.Fatalf("different eventID should succeed: %v", err)
+	}
+	if result3.Position == -1 {
+		t.Error("expected new position for different eventID")
+	}
+
+	// Now should have 2 events
+	if s.StreamVersion("alice") != 2 {
+		t.Errorf("expected version 2, got %d", s.StreamVersion("alice"))
+	}
+
+	// Suppress unused variable warning
+	_ = result1
+}
+
+func TestAppend_IdempotencySurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	// Open and write
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+
+	_, err = s.Append("alice", "persistent-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("first append failed: %v", err)
+	}
+	s.Close()
+
+	// Reopen (simulating restart)
+	s, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to reopen store: %v", err)
+	}
+	defer s.Close()
+
+	// Retry with same eventID should be idempotent
+	result, err := s.Append("alice", "persistent-id", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("idempotent append after restart should succeed, got: %v", err)
+	}
+
+	if result.Position != -1 {
+		t.Errorf("expected position -1 for idempotent write, got %d", result.Position)
+	}
+
+	// Still only 1 event
+	if s.StreamVersion("alice") != 1 {
+		t.Errorf("expected version 1, got %d", s.StreamVersion("alice"))
+	}
+}
+
+func TestAppend_ConcurrentWithExpectedVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Create initial event
+	_, _ = s.Append("alice", "init", []byte("init"), store.ExpectedVersionNoStream)
+
+	// Launch 10 goroutines all trying to append with expectedVersion=1
+	const numGoroutines = 10
+	results := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			eventID := fmt.Sprintf("event-%d", id)
+			_, err := s.Append("alice", eventID, []byte("data"), 1) // All expect version 1
+			results <- err
+		}(i)
+	}
+
+	// Collect results
+	successCount := 0
+	wrongVersionCount := 0
+	for i := 0; i < numGoroutines; i++ {
+		err := <-results
+		if err == nil {
+			successCount++
+		} else if err == store.ErrWrongExpectedVersion {
+			wrongVersionCount++
+		} else {
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+
+	// Exactly one should succeed (the first one to acquire the lock)
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 success, got %d", successCount)
+	}
+
+	// The rest should get wrong version error
+	if wrongVersionCount != numGoroutines-1 {
+		t.Errorf("expected %d wrong version errors, got %d", numGoroutines-1, wrongVersionCount)
+	}
+
+	// Final version should be 2 (init + 1 successful append)
+	if v := s.StreamVersion("alice"); v != 2 {
+		t.Errorf("expected version 2, got %d", v)
 	}
 }

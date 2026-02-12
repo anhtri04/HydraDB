@@ -1,13 +1,17 @@
 package store
 
 import (
+	"sync"
+
 	"github.com/hydra-db/hydra/log"
 )
 
-// Store wraps a Log and adds stream indexing.
+// Store wraps a Log and adds stream indexing with thread-safe access.
 type Store struct {
-	log   *log.Log
-	index map[string][]int64 // StreamID -> list of positions
+	mu       sync.RWMutex
+	log      *log.Log
+	index    map[string][]int64             // StreamID -> list of positions
+	eventIDs map[string]map[string]struct{} // StreamID -> set of eventIDs (for dedup)
 }
 
 // Open opens or creates a store at the given path.
@@ -19,8 +23,9 @@ func Open(path string) (*Store, error) {
 	}
 
 	s := &Store{
-		log:   l,
-		index: make(map[string][]int64),
+		log:      l,
+		index:    make(map[string][]int64),
+		eventIDs: make(map[string]map[string]struct{}),
 	}
 
 	// Rebuild index from existing data
@@ -32,7 +37,7 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// rebuildIndex scans the log and populates the index.
+// rebuildIndex scans the log and populates the index and eventIDs.
 func (s *Store) rebuildIndex() error {
 	records, err := s.log.ReadAll()
 	if err != nil {
@@ -40,12 +45,20 @@ func (s *Store) rebuildIndex() error {
 	}
 
 	for _, record := range records {
-		streamID, _, err := deserializeEnvelope(record.Data)
+		streamID, eventID, _, err := deserializeEnvelope(record.Data)
 		if err != nil {
 			// Skip invalid records
 			continue
 		}
 		s.index[streamID] = append(s.index[streamID], record.Position)
+
+		// Track eventID for deduplication
+		if eventID != "" {
+			if s.eventIDs[streamID] == nil {
+				s.eventIDs[streamID] = make(map[string]struct{})
+			}
+			s.eventIDs[streamID][eventID] = struct{}{}
+		}
 	}
 
 	return nil
@@ -56,32 +69,85 @@ func (s *Store) Close() error {
 	return s.log.Close()
 }
 
-// Append adds an event to a stream and returns its position and version.
-func (s *Store) Append(streamID string, data []byte) (pos int64, version int64, err error) {
-	// Wrap data with StreamID
-	envelope := serializeEnvelope(streamID, data)
+// Append adds an event to a stream with optimistic concurrency control.
+// Returns ErrWrongExpectedVersion if the expected version doesn't match.
+// If eventID already exists in the stream, returns success without writing (idempotent).
+func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion int64) (AppendResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	currentVersion := int64(len(s.index[streamID]))
+
+	// Check for idempotency - if eventID already seen, return success
+	if eventID != "" {
+		if ids, exists := s.eventIDs[streamID]; exists {
+			if _, seen := ids[eventID]; seen {
+				// Event already written, return current state (idempotent)
+				return AppendResult{
+					Position: -1, // Indicate no new write
+					Version:  currentVersion - 1,
+				}, nil
+			}
+		}
+	}
+
+	// Check expected version
+	switch expectedVersion {
+	case ExpectedVersionAny:
+		// Always allowed
+	case ExpectedVersionNoStream:
+		if currentVersion > 0 {
+			return AppendResult{}, ErrStreamExists
+		}
+	case ExpectedVersionStreamExists:
+		if currentVersion == 0 {
+			return AppendResult{}, ErrStreamNotFound
+		}
+	default:
+		if currentVersion != expectedVersion {
+			return AppendResult{}, ErrWrongExpectedVersion
+		}
+	}
+
+	// Wrap data with StreamID and EventID
+	envelope := serializeEnvelope(streamID, eventID, data)
 
 	// Write to log
-	pos, err = s.log.Append(envelope)
+	pos, err := s.log.Append(envelope)
 	if err != nil {
-		return 0, 0, err
+		return AppendResult{}, err
 	}
 
 	// Update index
 	s.index[streamID] = append(s.index[streamID], pos)
-	version = int64(len(s.index[streamID])) // Version is 1-based count, or use 0-based
+	newVersion := int64(len(s.index[streamID])) - 1 // 0-based version
 
-	return pos, version - 1, nil // Return 0-based version
+	// Track eventID for deduplication
+	if eventID != "" {
+		if s.eventIDs[streamID] == nil {
+			s.eventIDs[streamID] = make(map[string]struct{})
+		}
+		s.eventIDs[streamID][eventID] = struct{}{}
+	}
+
+	return AppendResult{
+		Position: pos,
+		Version:  newVersion,
+	}, nil
 }
 
 // StreamVersion returns the current version (event count) for a stream.
 // Returns 0 if the stream doesn't exist.
 func (s *Store) StreamVersion(streamID string) int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return int64(len(s.index[streamID]))
 }
 
 // ReadStream returns all events for a stream in version order.
 func (s *Store) ReadStream(streamID string) ([]Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	positions, exists := s.index[streamID]
 	if !exists {
 		return nil, nil // Stream doesn't exist, return empty
@@ -94,7 +160,7 @@ func (s *Store) ReadStream(streamID string) ([]Event, error) {
 			return nil, err
 		}
 
-		sid, data, err := deserializeEnvelope(raw)
+		sid, _, data, err := deserializeEnvelope(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -112,6 +178,8 @@ func (s *Store) ReadStream(streamID string) ([]Event, error) {
 
 // ReadStreamFrom returns events for a stream starting from the given version.
 func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	positions, exists := s.index[streamID]
 	if !exists {
 		return nil, nil
@@ -132,7 +200,7 @@ func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, err
 			return nil, err
 		}
 
-		sid, data, err := deserializeEnvelope(raw)
+		sid, _, data, err := deserializeEnvelope(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -150,6 +218,8 @@ func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, err
 
 // ReadAll returns all events in global (insertion) order.
 func (s *Store) ReadAll() ([]Event, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	records, err := s.log.ReadAll()
 	if err != nil {
 		return nil, err
@@ -160,7 +230,7 @@ func (s *Store) ReadAll() ([]Event, error) {
 
 	events := make([]Event, 0, len(records))
 	for _, record := range records {
-		sid, data, err := deserializeEnvelope(record.Data)
+		sid, _, data, err := deserializeEnvelope(record.Data)
 		if err != nil {
 			continue // Skip invalid records
 		}
