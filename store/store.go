@@ -1,13 +1,17 @@
 package store
 
 import (
+	"sync"
+
 	"github.com/hydra-db/hydra/log"
 )
 
-// Store wraps a Log and adds stream indexing.
+// Store wraps a Log and adds stream indexing with thread-safe access.
 type Store struct {
-	log   *log.Log
-	index map[string][]int64 // StreamID -> list of positions
+	mu       sync.RWMutex
+	log      *log.Log
+	index    map[string][]int64             // StreamID -> list of positions
+	eventIDs map[string]map[string]struct{} // StreamID -> set of eventIDs (for dedup)
 }
 
 // Open opens or creates a store at the given path.
@@ -19,8 +23,9 @@ func Open(path string) (*Store, error) {
 	}
 
 	s := &Store{
-		log:   l,
-		index: make(map[string][]int64),
+		log:      l,
+		index:    make(map[string][]int64),
+		eventIDs: make(map[string]map[string]struct{}),
 	}
 
 	// Rebuild index from existing data
