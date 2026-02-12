@@ -41,3 +41,53 @@ func TestStore_RebuildIndexOnOpen(t *testing.T) {
 		t.Errorf("expected charlie version 0, got %d", v)
 	}
 }
+
+func TestStore_ReadStream(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append events to multiple streams
+	s.Append("alice", []byte("alice-event-0"))
+	s.Append("bob", []byte("bob-event-0"))
+	s.Append("alice", []byte("alice-event-1"))
+	s.Append("alice", []byte("alice-event-2"))
+	s.Append("bob", []byte("bob-event-1"))
+
+	// Read alice's stream
+	events, err := s.ReadStream("alice")
+	if err != nil {
+		t.Fatalf("failed to read stream: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// Verify events are in order with correct versions
+	expected := []struct {
+		version int64
+		data    string
+	}{
+		{0, "alice-event-0"},
+		{1, "alice-event-1"},
+		{2, "alice-event-2"},
+	}
+
+	for i, e := range events {
+		if e.StreamVersion != expected[i].version {
+			t.Errorf("event %d: expected version %d, got %d", i, expected[i].version, e.StreamVersion)
+		}
+		if string(e.Data) != expected[i].data {
+			t.Errorf("event %d: expected data '%s', got '%s'", i, expected[i].data, string(e.Data))
+		}
+		if e.StreamID != "alice" {
+			t.Errorf("event %d: expected streamID 'alice', got '%s'", i, e.StreamID)
+		}
+	}
+}
