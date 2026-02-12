@@ -119,3 +119,52 @@ func (l *Log) ReadAt(pos int64) ([]byte, error) {
 
 	return data, nil
 }
+
+// ReadAll reads all valid records from the log sequentially.
+// Stops at EOF or when encountering a corrupt/incomplete record.
+func (l *Log) ReadAll() ([]Record, error) {
+	// Seek to start
+	if _, err := l.file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	var records []Record
+	var pos int64 = 0
+
+	for {
+		// Read length
+		var length uint32
+		if err := binary.Read(l.file, byteOrder, &length); err != nil {
+			if err == io.EOF {
+				break // Normal end of file
+			}
+			return records, nil // Incomplete header, stop reading
+		}
+
+		// Read stored checksum
+		var storedChecksum uint32
+		if err := binary.Read(l.file, byteOrder, &storedChecksum); err != nil {
+			return records, nil // Incomplete header, stop reading
+		}
+
+		// Read data
+		data := make([]byte, length)
+		if _, err := io.ReadFull(l.file, data); err != nil {
+			return records, nil // Incomplete data, stop reading
+		}
+
+		// Verify checksum
+		if crc32.ChecksumIEEE(data) != storedChecksum {
+			return records, nil // Corrupt record, stop reading
+		}
+
+		records = append(records, Record{
+			Position: pos,
+			Data:     data,
+		})
+
+		pos += int64(HeaderSize + len(data))
+	}
+
+	return records, nil
+}
