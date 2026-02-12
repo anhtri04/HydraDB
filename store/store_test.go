@@ -203,3 +203,30 @@ func TestAppend_RejectsWrongExpectedVersion(t *testing.T) {
 		t.Errorf("expected version 1, got %d", result.Version)
 	}
 }
+
+func TestAppend_ExpectedVersionAnyAlwaysSucceeds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append with Any to non-existent stream
+	_, err = s.Append("alice", "e1", []byte("data1"), store.ExpectedVersionAny)
+	if err != nil {
+		t.Fatalf("expected success with Any on new stream, got: %v", err)
+	}
+
+	// Append with Any to existing stream
+	_, err = s.Append("alice", "e2", []byte("data2"), store.ExpectedVersionAny)
+	if err != nil {
+		t.Fatalf("expected success with Any on existing stream, got: %v", err)
+	}
+
+	if v := s.StreamVersion("alice"); v != 2 {
+		t.Errorf("expected version 2, got %d", v)
+	}
+}
