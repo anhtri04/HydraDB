@@ -230,3 +230,52 @@ func TestAppend_ExpectedVersionAnyAlwaysSucceeds(t *testing.T) {
 		t.Errorf("expected version 2, got %d", v)
 	}
 }
+
+func TestAppend_ExpectedVersionNoStream(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// NoStream on new stream should succeed
+	_, err = s.Append("alice", "e1", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("expected success on new stream, got: %v", err)
+	}
+
+	// NoStream on existing stream should fail
+	_, err = s.Append("alice", "e2", []byte("data"), store.ExpectedVersionNoStream)
+	if err != store.ErrStreamExists {
+		t.Errorf("expected ErrStreamExists, got: %v", err)
+	}
+}
+
+func TestAppend_ExpectedVersionStreamExists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// StreamExists on new stream should fail
+	_, err = s.Append("alice", "e1", []byte("data"), store.ExpectedVersionStreamExists)
+	if err != store.ErrStreamNotFound {
+		t.Errorf("expected ErrStreamNotFound, got: %v", err)
+	}
+
+	// Create the stream
+	_, _ = s.Append("alice", "e1", []byte("data"), store.ExpectedVersionAny)
+
+	// StreamExists on existing stream should succeed
+	_, err = s.Append("alice", "e2", []byte("data"), store.ExpectedVersionStreamExists)
+	if err != nil {
+		t.Fatalf("expected success on existing stream, got: %v", err)
+	}
+}
