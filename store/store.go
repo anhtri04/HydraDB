@@ -147,3 +147,34 @@ func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, err
 
 	return events, nil
 }
+
+// ReadAll returns all events in global (insertion) order.
+func (s *Store) ReadAll() ([]Event, error) {
+	records, err := s.log.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+
+	// We need to track stream versions as we iterate
+	streamVersions := make(map[string]int64)
+
+	events := make([]Event, 0, len(records))
+	for _, record := range records {
+		sid, data, err := deserializeEnvelope(record.Data)
+		if err != nil {
+			continue // Skip invalid records
+		}
+
+		version := streamVersions[sid]
+		streamVersions[sid]++
+
+		events = append(events, Event{
+			GlobalPosition: record.Position,
+			StreamID:       sid,
+			StreamVersion:  version,
+			Data:           data,
+		})
+	}
+
+	return events, nil
+}
