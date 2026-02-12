@@ -374,3 +374,58 @@ func TestAppend_IdempotencySurvivesRestart(t *testing.T) {
 		t.Errorf("expected version 1, got %d", s.StreamVersion("alice"))
 	}
 }
+
+func TestAppend_ConcurrentWithExpectedVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Create initial event
+	_, _ = s.Append("alice", "init", []byte("init"), store.ExpectedVersionNoStream)
+
+	// Launch 10 goroutines all trying to append with expectedVersion=1
+	const numGoroutines = 10
+	results := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			eventID := fmt.Sprintf("event-%d", id)
+			_, err := s.Append("alice", eventID, []byte("data"), 1) // All expect version 1
+			results <- err
+		}(i)
+	}
+
+	// Collect results
+	successCount := 0
+	wrongVersionCount := 0
+	for i := 0; i < numGoroutines; i++ {
+		err := <-results
+		if err == nil {
+			successCount++
+		} else if err == store.ErrWrongExpectedVersion {
+			wrongVersionCount++
+		} else {
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+
+	// Exactly one should succeed (the first one to acquire the lock)
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 success, got %d", successCount)
+	}
+
+	// The rest should get wrong version error
+	if wrongVersionCount != numGoroutines-1 {
+		t.Errorf("expected %d wrong version errors, got %d", numGoroutines-1, wrongVersionCount)
+	}
+
+	// Final version should be 2 (init + 1 successful append)
+	if v := s.StreamVersion("alice"); v != 2 {
+		t.Errorf("expected version 2, got %d", v)
+	}
+}
