@@ -173,3 +173,45 @@ func TestReadAll_ReturnsAllRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestReadAll_StopsAtCorruptRecord(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.log")
+
+	l, err := log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to open log: %v", err)
+	}
+
+	// Append three records
+	l.Append([]byte("valid1"))
+	l.Append([]byte("valid2"))
+	pos3, _ := l.Append([]byte("valid3"))
+	l.Close()
+
+	// Corrupt the third record
+	f, err := os.OpenFile(path, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatalf("failed to open file: %v", err)
+	}
+	f.Seek(pos3+int64(log.HeaderSize), 0)
+	f.Write([]byte{0xFF})
+	f.Close()
+
+	// Reopen and read all
+	l, err = log.Open(path)
+	if err != nil {
+		t.Fatalf("failed to reopen log: %v", err)
+	}
+	defer l.Close()
+
+	records, err := l.ReadAll()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should only return the first two valid records
+	if len(records) != 2 {
+		t.Errorf("expected 2 records, got %d", len(records))
+	}
+}
