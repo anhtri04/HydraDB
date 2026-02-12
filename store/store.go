@@ -69,22 +69,71 @@ func (s *Store) Close() error {
 	return s.log.Close()
 }
 
-// Append adds an event to a stream and returns its position and version.
-func (s *Store) Append(streamID string, data []byte) (pos int64, version int64, err error) {
-	// Wrap data with StreamID
-	envelope := serializeEnvelope(streamID, "", data)
+// Append adds an event to a stream with optimistic concurrency control.
+// Returns ErrWrongExpectedVersion if the expected version doesn't match.
+// If eventID already exists in the stream, returns success without writing (idempotent).
+func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion int64) (AppendResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	currentVersion := int64(len(s.index[streamID]))
+
+	// Check for idempotency - if eventID already seen, return success
+	if eventID != "" {
+		if ids, exists := s.eventIDs[streamID]; exists {
+			if _, seen := ids[eventID]; seen {
+				// Event already written, return current state (idempotent)
+				return AppendResult{
+					Position: -1, // Indicate no new write
+					Version:  currentVersion - 1,
+				}, nil
+			}
+		}
+	}
+
+	// Check expected version
+	switch expectedVersion {
+	case ExpectedVersionAny:
+		// Always allowed
+	case ExpectedVersionNoStream:
+		if currentVersion > 0 {
+			return AppendResult{}, ErrStreamExists
+		}
+	case ExpectedVersionStreamExists:
+		if currentVersion == 0 {
+			return AppendResult{}, ErrStreamNotFound
+		}
+	default:
+		if currentVersion != expectedVersion {
+			return AppendResult{}, ErrWrongExpectedVersion
+		}
+	}
+
+	// Wrap data with StreamID and EventID
+	envelope := serializeEnvelope(streamID, eventID, data)
 
 	// Write to log
-	pos, err = s.log.Append(envelope)
+	pos, err := s.log.Append(envelope)
 	if err != nil {
-		return 0, 0, err
+		return AppendResult{}, err
 	}
 
 	// Update index
 	s.index[streamID] = append(s.index[streamID], pos)
-	version = int64(len(s.index[streamID])) // Version is 1-based count, or use 0-based
+	newVersion := int64(len(s.index[streamID])) - 1 // 0-based version
 
-	return pos, version - 1, nil // Return 0-based version
+	// Track eventID for deduplication
+	if eventID != "" {
+		if s.eventIDs[streamID] == nil {
+			s.eventIDs[streamID] = make(map[string]struct{})
+		}
+		s.eventIDs[streamID][eventID] = struct{}{}
+	}
+
+	return AppendResult{
+		Position: pos,
+		Version:  newVersion,
+	}, nil
 }
 
 // StreamVersion returns the current version (event count) for a stream.
