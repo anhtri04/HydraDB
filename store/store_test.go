@@ -429,3 +429,117 @@ func TestAppend_ConcurrentWithExpectedVersion(t *testing.T) {
 		t.Errorf("expected version 2, got %d", v)
 	}
 }
+
+func TestStore_DeleteStream(t *testing.T) {
+	dir := t.TempDir()
+
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Create stream with events
+	s.Append("user-1", "e1", []byte("event1"), store.ExpectedVersionAny)
+	s.Append("user-1", "e2", []byte("event2"), store.ExpectedVersionAny)
+
+	// Verify we can read it
+	events, _ := s.ReadStream("user-1")
+	if len(events) != 2 {
+		t.Errorf("expected 2 events, got %d", len(events))
+	}
+
+	// Delete the stream
+	err = s.DeleteStream("user-1")
+	if err != nil {
+		t.Fatalf("failed to delete stream: %v", err)
+	}
+
+	// Should return empty now
+	events, _ = s.ReadStream("user-1")
+	if len(events) != 0 {
+		t.Errorf("expected 0 events after delete, got %d", len(events))
+	}
+
+	// Should be marked as deleted
+	if !s.IsDeleted("user-1") {
+		t.Error("stream should be marked as deleted")
+	}
+}
+
+func TestStore_DeleteStreamIdempotent(t *testing.T) {
+	dir := t.TempDir()
+
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	s.Append("user-1", "e1", []byte("event1"), store.ExpectedVersionAny)
+
+	// Delete twice should not error
+	err = s.DeleteStream("user-1")
+	if err != nil {
+		t.Fatalf("first delete failed: %v", err)
+	}
+
+	err = s.DeleteStream("user-1")
+	if err != nil {
+		t.Fatalf("second delete should not fail: %v", err)
+	}
+}
+
+func TestStore_DeleteSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create and delete stream
+	func() {
+		s, _ := store.Open(dir)
+		s.Append("user-1", "e1", []byte("event1"), store.ExpectedVersionAny)
+		s.DeleteStream("user-1")
+		s.Close()
+	}()
+
+	// Reopen and verify still deleted
+	s, _ := store.Open(dir)
+	defer s.Close()
+
+	if !s.IsDeleted("user-1") {
+		t.Error("deletion should survive restart")
+	}
+
+	events, _ := s.ReadStream("user-1")
+	if len(events) != 0 {
+		t.Error("deleted stream should return empty")
+	}
+}
+
+func TestStore_DeletedStreamNotInReadAll(t *testing.T) {
+	dir := t.TempDir()
+
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Create two streams
+	s.Append("user-1", "e1", []byte("user1-event"), store.ExpectedVersionAny)
+	s.Append("user-2", "e2", []byte("user2-event"), store.ExpectedVersionAny)
+
+	// Delete one stream
+	s.DeleteStream("user-1")
+
+	// ReadAll should still show all events (global log is immutable)
+	// But ReadStream for deleted stream returns empty
+	events, _ := s.ReadStream("user-1")
+	if len(events) != 0 {
+		t.Error("deleted stream should return empty from ReadStream")
+	}
+
+	events, _ = s.ReadStream("user-2")
+	if len(events) != 1 {
+		t.Error("non-deleted stream should still be readable")
+	}
+}
