@@ -124,7 +124,7 @@ func (s *Segment) ReadAt(localOffset int64) ([]byte, error) {
 	// Verify checksum
 	actualChecksum := crc32.ChecksumIEEE(data)
 	if actualChecksum != expectedChecksum {
-		return nil, fmt.Errorf("checksum mismatch at offset %d", localOffset)
+		return nil, ErrCorruptRecord
 	}
 
 	return data, nil

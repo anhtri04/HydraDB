@@ -116,8 +116,9 @@ func TestReadAt_DetectsCorruption(t *testing.T) {
 	}
 	l.Close()
 
-	// Corrupt the data (byte after header)
-	f, err := os.OpenFile(path, os.O_RDWR, 0644)
+	// Corrupt the data (byte after header) - open the segment file
+	segmentFile := filepath.Join(path, "hydra-00000.log")
+	f, err := os.OpenFile(segmentFile, os.O_RDWR, 0644)
 	if err != nil {
 		t.Fatalf("failed to open file: %v", err)
 	}
@@ -189,8 +190,9 @@ func TestReadAll_StopsAtCorruptRecord(t *testing.T) {
 	pos3, _ := l.Append([]byte("valid3"))
 	l.Close()
 
-	// Corrupt the third record
-	f, err := os.OpenFile(path, os.O_RDWR, 0644)
+	// Corrupt the third record - open the segment file
+	segmentFile := filepath.Join(path, "hydra-00000.log")
+	f, err := os.OpenFile(segmentFile, os.O_RDWR, 0644)
 	if err != nil {
 		t.Fatalf("failed to open file: %v", err)
 	}
