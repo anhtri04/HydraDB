@@ -12,7 +12,26 @@
       "Bash(echo:*)",
       "Bash(git check-ignore -q .worktrees)",
       "Bash(git worktree add .worktrees/phase-2-stream-index -b phase-2-stream-index)",
-      "Bash(go mod download)"
+      "Bash(go mod download)",
+      "Bash(git checkout master)",
+      "Bash(set:*)",
+      "Bash($env:CGO_ENABLED=1)",
+      "Bash(./bank deposit:*)",
+      "Bash(./bank open:*)",
+      "Bash(./bank withdraw:*)",
+      "Bash(./bank balance:*)",
+      "Bash(./bank history:*)",
+      "Bash(./bank stats:*)",
+      "Bash(go get:*)",
+      "Bash(go install:*)",
+      "Bash(protoc --version:*)",
+      "Bash(curl:*)",
+      "Bash(grpcurl:*)",
+      "Bash(pkill -f hydra-server)",
+      "Bash(git -C \"C:\\\\Users\\\\Anh Tri\\\\Desktop\\\\hydra-db\" log --oneline -30)",
+      "Bash(git -C \"C:\\\\Users\\\\Anh Tri\\\\Desktop\\\\hydra-db\" diff --stat HEAD)",
+      "Bash(git -C \"C:\\\\Users\\\\Anh Tri\\\\Desktop\\\\hydra-db\" diff HEAD -- server/grpc/server.go)",
+      "Bash(go -C \"C:\\\\Users\\\\Anh Tri\\\\Desktop\\\\hydra-db\" test ./...)"
     ]
   }
 }

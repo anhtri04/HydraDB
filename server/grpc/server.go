@@ -82,7 +82,7 @@ func (s *Server) Append(ctx context.Context, req *pb.AppendRequest) (*pb.AppendR
 }
 
 // ReadStream implements the ReadStream RPC (server streaming)
-func (s *Server) ReadStream(req *pb.ReadStreamRequest, stream pb.EventStore_ReadStreamServer) error {
+func (s *Server) ReadStream(req *pb.ReadStreamRequest, stream grpc.ServerStreamingServer[pb.Event]) error {
 	var events []store.Event
 	var err error
 
@@ -111,7 +111,7 @@ func (s *Server) ReadStream(req *pb.ReadStreamRequest, stream pb.EventStore_Read
 }
 
 // ReadAll implements the ReadAll RPC (server streaming)
-func (s *Server) ReadAll(req *pb.ReadAllRequest, stream pb.EventStore_ReadAllServer) error {
+func (s *Server) ReadAll(req *pb.ReadAllRequest, stream grpc.ServerStreamingServer[pb.Event]) error {
 	events, err := s.store.ReadAll()
 	if err != nil {
 		return status.Errorf(codes.Internal, "failed to read all: %v", err)
@@ -137,7 +137,7 @@ func (s *Server) ReadAll(req *pb.ReadAllRequest, stream pb.EventStore_ReadAllSer
 }
 
 // SubscribeToAll implements catch-up + live subscription to all events
-func (s *Server) SubscribeToAll(req *pb.SubscribeToAllRequest, stream pb.EventStore_SubscribeToAllServer) error {
+func (s *Server) SubscribeToAll(req *pb.SubscribeToAllRequest, stream grpc.ServerStreamingServer[pb.Event]) error {
 	// Subscribe to live events
 	sub := s.broadcaster.Subscribe(nil, 1000)
 	defer s.broadcaster.Unsubscribe(sub.ID)
@@ -191,7 +191,7 @@ func (s *Server) SubscribeToAll(req *pb.SubscribeToAllRequest, stream pb.EventSt
 }
 
 // SubscribeToStream implements catch-up + live subscription to a specific stream
-func (s *Server) SubscribeToStream(req *pb.SubscribeToStreamRequest, stream pb.EventStore_SubscribeToStreamServer) error {
+func (s *Server) SubscribeToStream(req *pb.SubscribeToStreamRequest, stream grpc.ServerStreamingServer[pb.Event]) error {
 	// Subscribe to live events for this stream
 	sub := s.broadcaster.Subscribe(&req.StreamId, 1000)
 	defer s.broadcaster.Unsubscribe(sub.ID)
