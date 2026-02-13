@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/hydra-db/hydra/server/grpc/proto"
@@ -42,6 +43,7 @@ func (s *Server) Start() error {
 	}
 
 	pb.RegisterEventStoreServer(s.grpcServer, s)
+	reflection.Register(s.grpcServer)
 
 	log.Printf("gRPC server starting on :%d", s.port)
 	return s.grpcServer.Serve(lis)
