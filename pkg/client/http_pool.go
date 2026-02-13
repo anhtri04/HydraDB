@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,7 @@ type HTTPPool struct {
 	baseURL string
 	size    int
 	closed  bool
+	mu      sync.Mutex
 }
 
 func NewHTTPPool(baseURL string, size int) (*HTTPPool, error) {
@@ -80,9 +82,24 @@ func (p *HTTPPool) Put(client *http.Client) {
 	}
 }
 
-// Temporary stub for Close (will be implemented in Task 4)
+// Close shuts down the pool and closes all connections
 func (p *HTTPPool) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.closed {
+		return ErrPoolClosed
+	}
+
 	p.closed = true
 	close(p.clients)
+
+	// Close all idle connections in each client
+	for client := range p.clients {
+		if transport, ok := client.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+
 	return nil
 }

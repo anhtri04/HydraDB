@@ -55,3 +55,17 @@ func TestHTTPPool_GetFromClosedPool(t *testing.T) {
 	client := pool.Get()
 	assert.Nil(t, client)
 }
+
+func TestHTTPPool_Close(t *testing.T) {
+	pool, err := NewHTTPPool("http://localhost:8080", 2)
+	require.NoError(t, err)
+
+	// Close should not panic
+	err = pool.Close()
+	assert.NoError(t, err)
+	assert.True(t, pool.closed)
+
+	// Second close should return error
+	err = pool.Close()
+	assert.Error(t, err)
+}
