@@ -306,6 +306,11 @@ func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, err
 	return events, nil
 }
 
+// GetLog returns the underlying log (for scavenging)
+func (s *Store) GetLog() *log.Log {
+	return s.log
+}
+
 // ReadAll returns all events in global (insertion) order.
 func (s *Store) ReadAll() ([]Event, error) {
 	s.mu.RLock()
