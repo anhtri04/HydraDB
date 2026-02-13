@@ -7,6 +7,9 @@ import (
 	"github.com/hydra-db/hydra/pubsub"
 )
 
+// StreamDeletedType is the event type marker for stream deletion tombstones
+const StreamDeletedType = "$stream-deleted"
+
 // Store wraps a Log and adds stream indexing with thread-safe access.
 type Store struct {
 	mu          sync.RWMutex
@@ -14,6 +17,7 @@ type Store struct {
 	index       map[string][]int64             // StreamID -> list of positions
 	eventIDs    map[string]map[string]struct{} // StreamID -> set of eventIDs (for dedup)
 	broadcaster *pubsub.Broadcaster
+	deleted     map[string]bool // tracks deleted streams
 }
 
 // Open opens or creates a store at the given path.
@@ -28,6 +32,7 @@ func Open(path string) (*Store, error) {
 		log:      l,
 		index:    make(map[string][]int64),
 		eventIDs: make(map[string]map[string]struct{}),
+		deleted:  make(map[string]bool),
 	}
 
 	// Rebuild index from existing data
@@ -47,11 +52,18 @@ func (s *Store) rebuildIndex() error {
 	}
 
 	for _, record := range records {
-		streamID, eventID, _, err := deserializeEnvelope(record.Data)
+		streamID, eventID, data, err := deserializeEnvelope(record.Data)
 		if err != nil {
 			// Skip invalid records
 			continue
 		}
+
+		// Check for tombstone
+		if string(data) == StreamDeletedType {
+			s.deleted[streamID] = true
+			continue
+		}
+
 		s.index[streamID] = append(s.index[streamID], record.Position)
 
 		// Track eventID for deduplication
@@ -69,6 +81,34 @@ func (s *Store) rebuildIndex() error {
 // Close closes the underlying log.
 func (s *Store) Close() error {
 	return s.log.Close()
+}
+
+// DeleteStream marks a stream as deleted (soft delete)
+// The stream data remains in the log but is hidden from reads
+func (s *Store) DeleteStream(streamID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.deleted[streamID] {
+		return nil // Already deleted
+	}
+
+	// Write tombstone event
+	tombstone := serializeEnvelope(streamID, "", []byte(StreamDeletedType))
+	_, err := s.log.Append(tombstone)
+	if err != nil {
+		return err
+	}
+
+	s.deleted[streamID] = true
+	return nil
+}
+
+// IsDeleted returns true if a stream has been deleted
+func (s *Store) IsDeleted(streamID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deleted[streamID]
 }
 
 // SetBroadcaster sets the broadcaster for publishing events
@@ -165,6 +205,12 @@ func (s *Store) StreamVersion(streamID string) int64 {
 func (s *Store) ReadStream(streamID string) ([]Event, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// Check if stream is deleted
+	if s.deleted[streamID] {
+		return nil, nil // Return empty for deleted streams
+	}
+
 	positions, exists := s.index[streamID]
 	if !exists {
 		return nil, nil // Stream doesn't exist, return empty
@@ -197,6 +243,12 @@ func (s *Store) ReadStream(streamID string) ([]Event, error) {
 func (s *Store) ReadStreamFrom(streamID string, fromVersion int64) ([]Event, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	// Check if stream is deleted
+	if s.deleted[streamID] {
+		return nil, nil // Return empty for deleted streams
+	}
+
 	positions, exists := s.index[streamID]
 	if !exists {
 		return nil, nil
