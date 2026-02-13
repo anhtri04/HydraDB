@@ -18,6 +18,7 @@ type Store struct {
 	eventIDs    map[string]map[string]struct{} // StreamID -> set of eventIDs (for dedup)
 	broadcaster *pubsub.Broadcaster
 	deleted     map[string]bool // tracks deleted streams
+	snapshots   *SnapshotStore
 }
 
 // Open opens or creates a store at the given path.
@@ -101,6 +102,12 @@ func (s *Store) DeleteStream(streamID string) error {
 	}
 
 	s.deleted[streamID] = true
+
+	// Clean up snapshot if exists
+	if s.snapshots != nil {
+		s.snapshots.Delete(streamID)
+	}
+
 	return nil
 }
 
@@ -114,6 +121,20 @@ func (s *Store) IsDeleted(streamID string) bool {
 // SetBroadcaster sets the broadcaster for publishing events
 func (s *Store) SetBroadcaster(b *pubsub.Broadcaster) {
 	s.broadcaster = b
+}
+
+// SetSnapshotStore sets the snapshot store for this store
+func (s *Store) SetSnapshotStore(ss *SnapshotStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.snapshots = ss
+}
+
+// Snapshots returns the snapshot store (may be nil)
+func (s *Store) Snapshots() *SnapshotStore {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snapshots
 }
 
 // Append adds an event to a stream with optimistic concurrency control.
