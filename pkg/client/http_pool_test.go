@@ -22,3 +22,36 @@ func TestNewHTTPPool_InvalidSize(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, pool)
 }
+
+func TestHTTPPool_GetPut(t *testing.T) {
+	pool, err := NewHTTPPool("http://localhost:8080", 2)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	// Get a client
+	client1 := pool.Get()
+	assert.NotNil(t, client1)
+	assert.Equal(t, 1, len(pool.clients)) // One remaining
+
+	// Get another
+	client2 := pool.Get()
+	assert.NotNil(t, client2)
+	assert.Equal(t, 0, len(pool.clients)) // None remaining
+
+	// Put them back
+	pool.Put(client1)
+	assert.Equal(t, 1, len(pool.clients))
+
+	pool.Put(client2)
+	assert.Equal(t, 2, len(pool.clients))
+}
+
+func TestHTTPPool_GetFromClosedPool(t *testing.T) {
+	pool, err := NewHTTPPool("http://localhost:8080", 2)
+	require.NoError(t, err)
+
+	pool.Close()
+
+	client := pool.Get()
+	assert.Nil(t, client)
+}
