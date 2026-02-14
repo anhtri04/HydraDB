@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"os/signal"
@@ -14,9 +15,39 @@ import (
 	httpserver "github.com/hydra-db/hydra/server/http"
 )
 
+// buildDurabilityConfig creates a DurabilityConfig from CLI flags
+func buildDurabilityConfig(mode string, interval time.Duration, batchSize int) store.DurabilityConfig {
+	switch mode {
+	case "async":
+		return store.WithAsync(interval, batchSize)
+	case "every-second":
+		return store.DurabilityConfig{
+			SyncMode:      store.SyncEverySecond,
+			SyncInterval:  time.Second,
+			SyncBatchSize: batchSize,
+		}
+	case "every-write":
+		return store.DefaultDurabilityConfig()
+	default:
+		log.Printf("Unknown sync-mode '%s', using default (every-write)\n", mode)
+		return store.DefaultDurabilityConfig()
+	}
+}
+
 func main() {
-	// Open store
-	s, err := store.Open("hydra.log")
+	// CLI flags for durability configuration
+	var (
+		syncMode       = flag.String("sync-mode", "every-write", "Durability mode: every-write, async, every-second")
+		syncInterval   = flag.Duration("sync-interval", 10*time.Millisecond, "Max time between syncs (for async mode)")
+		syncBatchSize  = flag.Int("sync-batch-size", 1000, "Max events between syncs (for async mode)")
+	)
+	flag.Parse()
+
+	// Build durability config from flags
+	config := buildDurabilityConfig(*syncMode, *syncInterval, *syncBatchSize)
+
+	// Open store with durability config
+	s, err := store.Open("hydra.log", store.WithDurability(config))
 	if err != nil {
 		log.Fatalf("Failed to open store: %v", err)
 	}
@@ -45,6 +76,7 @@ func main() {
 	}()
 
 	log.Println("Hydra Event Store started")
+	log.Printf("  Durability: %s (interval: %v, batch: %d)\n", *syncMode, config.SyncInterval, config.SyncBatchSize)
 	log.Println("  HTTP: http://localhost:8080")
 	log.Println("  gRPC: localhost:9090")
 
