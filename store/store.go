@@ -2,6 +2,7 @@ package store
 
 import (
 	"sync"
+	"time"
 
 	"github.com/hydra-db/hydra/log"
 	"github.com/hydra-db/hydra/pubsub"
@@ -19,27 +20,61 @@ type Store struct {
 	broadcaster *pubsub.Broadcaster
 	deleted     map[string]bool // tracks deleted streams
 	snapshots   *SnapshotStore
+
+	// durability config
+	durability DurabilityConfig
+	flusher    *AsyncFlusher
+}
+
+// Option configures a Store
+type Option func(*Store) error
+
+// WithDurability sets the durability configuration
+func WithDurability(config DurabilityConfig) Option {
+	return func(s *Store) error {
+		s.durability = config
+		return nil
+	}
 }
 
 // Open opens or creates a store at the given path.
 // It rebuilds the index by scanning the existing log.
-func Open(path string) (*Store, error) {
+func Open(path string, opts ...Option) (*Store, error) {
 	l, err := log.Open(path)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Store{
-		log:      l,
-		index:    make(map[string][]int64),
-		eventIDs: make(map[string]map[string]struct{}),
-		deleted:  make(map[string]bool),
+		log:        l,
+		index:      make(map[string][]int64),
+		eventIDs:   make(map[string]map[string]struct{}),
+		deleted:    make(map[string]bool),
+		durability: DefaultDurabilityConfig(),
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		if err := opt(s); err != nil {
+			l.Close()
+			return nil, err
+		}
 	}
 
 	// Rebuild index from existing data
 	if err := s.rebuildIndex(); err != nil {
 		l.Close()
 		return nil, err
+	}
+
+	// Initialize async flusher if needed
+	if s.durability.SyncMode == SyncAsync || s.durability.SyncMode == SyncEverySecond {
+		if s.durability.SyncMode == SyncEverySecond {
+			s.durability.SyncInterval = time.Second
+		}
+		s.flusher = NewAsyncFlusher(s.durability, func() error {
+			return s.log.Flush()
+		})
 	}
 
 	return s, nil
@@ -81,6 +116,11 @@ func (s *Store) rebuildIndex() error {
 
 // Close closes the underlying log.
 func (s *Store) Close() error {
+	if s.flusher != nil {
+		if err := s.flusher.Stop(); err != nil {
+			return err
+		}
+	}
 	return s.log.Close()
 }
 
