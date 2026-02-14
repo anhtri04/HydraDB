@@ -268,3 +268,11 @@ func (l *Log) ClosedSegments() []SegmentInfo {
 func (l *Log) Dir() string {
 	return l.dir
 }
+
+// Flush syncs the active segment to disk
+func (l *Log) Flush() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.activeSegment.Flush()
+}

@@ -225,3 +225,11 @@ func (s *Segment) Delete() error {
 	s.file.Close()
 	return os.Remove(s.path)
 }
+
+// Flush syncs the segment file to disk
+func (s *Segment) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.file.Sync()
+}
