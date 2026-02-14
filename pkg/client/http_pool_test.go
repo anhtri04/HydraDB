@@ -1,6 +1,8 @@
 package client
 
 import (
+	"net/http"
+	"time"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,4 +70,27 @@ func TestHTTPPool_Close(t *testing.T) {
 	// Second close should return error
 	err = pool.Close()
 	assert.Error(t, err)
+}
+
+func TestHTTPPool_Do(t *testing.T) {
+	// This test requires a running server
+	// Skip if server not available
+	client := &http.Client{Timeout: 1 * time.Second}
+	_, err := client.Get("http://localhost:8080/health")
+	if err != nil {
+		t.Skip("Server not available:", err)
+	}
+
+	pool, err := NewHTTPPool("http://localhost:8080", 2)
+	require.NoError(t, err)
+	defer pool.Close()
+
+	req, err := http.NewRequest("GET", "http://localhost:8080/health", nil)
+	require.NoError(t, err)
+
+	resp, err := pool.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }

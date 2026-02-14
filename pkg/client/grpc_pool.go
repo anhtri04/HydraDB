@@ -3,9 +3,11 @@ package client
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
@@ -16,6 +18,7 @@ type GRPCPool struct {
 	size        int
 	closed      bool
 	dialOpts    []grpc.DialOption
+	mu          sync.Mutex
 }
 
 func NewGRPCPool(target string, size int, opts ...grpc.DialOption) (*GRPCPool, error) {
@@ -55,9 +58,54 @@ func NewGRPCPool(target string, size int, opts ...grpc.DialOption) (*GRPCPool, e
 	return pool, nil
 }
 
-// Temporary stub
+func (p *GRPCPool) Get() *grpc.ClientConn {
+	if p.closed {
+		return nil
+	}
+	conn, ok := <-p.connections
+	if !ok {
+		return nil
+	}
+	return conn
+}
+
+func (p *GRPCPool) Put(conn *grpc.ClientConn) {
+	if p.closed || conn == nil {
+		return
+	}
+
+	state := conn.GetState()
+	if state == connectivity.Shutdown {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		newConn, err := grpc.DialContext(ctx, p.target, p.dialOpts...)
+		cancel()
+		if err != nil {
+			return
+		}
+		conn = newConn
+	}
+
+	select {
+	case p.connections <- conn:
+	default:
+		conn.Close()
+	}
+}
+
 func (p *GRPCPool) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.closed {
+		return ErrPoolClosed
+	}
+
 	p.closed = true
 	close(p.connections)
+
+	for conn := range p.connections {
+		conn.Close()
+	}
+
 	return nil
 }

@@ -14,9 +14,9 @@ import (
 
 const (
 	targetURL    = "localhost:9090"
-	poolSize     = 10
+	poolSize     = 30
 	numWorkers   = 1000
-	testDuration = 30 * time.Second
+	testDuration = 60 * time.Second
 )
 
 func main() {

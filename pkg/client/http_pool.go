@@ -82,6 +82,17 @@ func (p *HTTPPool) Put(client *http.Client) {
 	}
 }
 
+// Do executes an HTTP request using a pooled connection
+func (p *HTTPPool) Do(req *http.Request) (*http.Response, error) {
+	client := p.Get()
+	if client == nil {
+		return nil, ErrPoolClosed
+	}
+	defer p.Put(client)
+
+	return client.Do(req)
+}
+
 // Close shuts down the pool and closes all connections
 func (p *HTTPPool) Close() error {
 	p.mu.Lock()
