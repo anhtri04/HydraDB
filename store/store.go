@@ -181,6 +181,22 @@ func (s *Store) Snapshots() *SnapshotStore {
 // Returns ErrWrongExpectedVersion if the expected version doesn't match.
 // If eventID already exists in the stream, returns success without writing (idempotent).
 func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion int64) (AppendResult, error) {
+	result, flushDone, err := s.appendInternal(streamID, eventID, data, expectedVersion)
+	if err != nil {
+		return AppendResult{}, err
+	}
+
+	// Wait for flush outside the lock (async mode)
+	if flushDone != nil {
+		<-flushDone
+	}
+
+	return result, nil
+}
+
+// appendInternal performs the locked portion of Append.
+// Returns a channel that will be closed when data is flushed (if async mode).
+func (s *Store) appendInternal(streamID, eventID string, data []byte, expectedVersion int64) (AppendResult, <-chan struct{}, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -194,7 +210,7 @@ func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion in
 				return AppendResult{
 					Position: -1, // Indicate no new write
 					Version:  currentVersion - 1,
-				}, nil
+				}, nil, nil
 			}
 		}
 	}
@@ -205,15 +221,15 @@ func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion in
 		// Always allowed
 	case ExpectedVersionNoStream:
 		if currentVersion > 0 {
-			return AppendResult{}, ErrStreamExists
+			return AppendResult{}, nil, ErrStreamExists
 		}
 	case ExpectedVersionStreamExists:
 		if currentVersion == 0 {
-			return AppendResult{}, ErrStreamNotFound
+			return AppendResult{}, nil, ErrStreamNotFound
 		}
 	default:
 		if currentVersion != expectedVersion {
-			return AppendResult{}, ErrWrongExpectedVersion
+			return AppendResult{}, nil, ErrWrongExpectedVersion
 		}
 	}
 
@@ -223,12 +239,12 @@ func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion in
 	// Write to log
 	pos, err := s.log.Append(envelope)
 	if err != nil {
-		return AppendResult{}, err
+		return AppendResult{}, nil, err
 	}
 
 	// Update index
 	s.index[streamID] = append(s.index[streamID], pos)
-	newVersion := int64(len(s.index[streamID])) - 1 // 0-based version
+	newVersion := int64(len(s.index[streamID])) - 1
 
 	// Track eventID for deduplication
 	if eventID != "" {
@@ -248,10 +264,42 @@ func (s *Store) Append(streamID, eventID string, data []byte, expectedVersion in
 		})
 	}
 
-	return AppendResult{
+	result := AppendResult{
 		Position: pos,
 		Version:  newVersion,
-	}, nil
+	}
+
+	// Queue for async flush if enabled
+	if s.flusher != nil {
+		return result, s.flusher.Queue(), nil
+	}
+
+	return result, nil, nil
+}
+
+// AppendSync adds an event and forces immediate fsync to disk.
+// Use this for critical writes that must survive a crash.
+func (s *Store) AppendSync(streamID, eventID string, data []byte, expectedVersion int64) (AppendResult, error) {
+	result, _, err := s.appendInternal(streamID, eventID, data, expectedVersion)
+	if err != nil {
+		return AppendResult{}, err
+	}
+
+	// Force immediate sync
+	if err := s.log.Flush(); err != nil {
+		return result, err
+	}
+
+	return result, nil
+}
+
+// Flush forces an immediate sync of all pending writes to disk.
+// Returns nil if sync mode is SyncEveryWrite (nothing to flush).
+func (s *Store) Flush() error {
+	if s.flusher != nil {
+		return s.flusher.Flush()
+	}
+	return s.log.Flush()
 }
 
 // StreamVersion returns the current version (event count) for a stream.
