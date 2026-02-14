@@ -19,6 +19,7 @@ type AsyncFlusher struct {
 	pending []*pendingWrite
 	timer   *time.Timer
 	stopCh  chan struct{}
+	stopOnce sync.Once
 	wg      sync.WaitGroup
 	flushFn func() error
 }
@@ -100,7 +101,9 @@ func (f *AsyncFlusher) Flush() error {
 
 // Stop shuts down the flusher, performing a final flush
 func (f *AsyncFlusher) Stop() error {
-	close(f.stopCh)
+	f.stopOnce.Do(func() {
+		close(f.stopCh)
+	})
 	err := f.Flush()
 	f.wg.Wait()
 	return err

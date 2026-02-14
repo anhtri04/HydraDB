@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hydra-db/hydra/store"
 )
@@ -541,5 +542,101 @@ func TestStore_DeletedStreamNotInReadAll(t *testing.T) {
 	events, _ = s.ReadStream("user-2")
 	if len(events) != 1 {
 		t.Error("non-deleted stream should still be readable")
+	}
+}
+
+func TestStore_AsyncDurability(t *testing.T) {
+	dir := t.TempDir()
+
+	config := store.WithAsync(50*time.Millisecond, 100)
+
+	s, err := store.Open(dir, store.WithDurability(config))
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append an event
+	result, err := s.Append("test-stream", "event-1", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("failed to append: %v", err)
+	}
+
+	// Event should be visible immediately (in-memory)
+	if result.Version != 0 {
+		t.Errorf("expected version 0, got %d", result.Version)
+	}
+}
+
+func TestStore_AppendSync(t *testing.T) {
+	dir := t.TempDir()
+
+	// Use async mode but force sync for critical writes
+	config := store.WithAsync(time.Hour, 1000)
+
+	s, err := store.Open(dir, store.WithDurability(config))
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Use AppendSync for critical write
+	result, err := s.AppendSync("test-stream", "event-1", []byte("data"), store.ExpectedVersionNoStream)
+	if err != nil {
+		t.Fatalf("failed to append sync: %v", err)
+	}
+
+	if result.Version != 0 {
+		t.Errorf("expected version 0, got %d", result.Version)
+	}
+
+	// Reopen store and verify data persisted
+	s.Close()
+
+	s2, err := store.Open(dir, store.WithDurability(store.DefaultDurabilityConfig()))
+	if err != nil {
+		t.Fatalf("failed to reopen store: %v", err)
+	}
+	defer s2.Close()
+
+	// Should be able to read the event
+	events, err := s2.ReadStream("test-stream")
+	if err != nil {
+		t.Fatalf("failed to read stream: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Errorf("expected 1 event after reopen, got %d", len(events))
+	}
+}
+
+func TestStore_AsyncBatchThroughput(t *testing.T) {
+	dir := t.TempDir()
+
+	config := store.WithAsync(10*time.Millisecond, 100)
+
+	s, err := store.Open(dir, store.WithDurability(config))
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer s.Close()
+
+	// Append multiple events
+	start := time.Now()
+	for i := 0; i < 100; i++ {
+		eventID := fmt.Sprintf("event-%d", i)
+		_, err := s.Append("test-stream", eventID, []byte("data"), store.ExpectedVersionAny)
+		if err != nil {
+			t.Fatalf("failed to append event %d: %v", i, err)
+		}
+	}
+	elapsed := time.Since(start)
+
+	t.Logf("Appended 100 events in %v", elapsed)
+
+	// With async mode, this should be very fast (< 100ms for 100 events)
+	// In sync mode, this would take 100+ fsyncs = ~500-1000ms
+	if elapsed > 500*time.Millisecond {
+		t.Logf("Warning: async mode slower than expected, took %v", elapsed)
 	}
 }
