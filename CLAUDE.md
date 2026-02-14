@@ -79,6 +79,39 @@ The store package defines specific errors for concurrency control:
 
 Tests use `t.TempDir()` for isolation and create fresh store instances per test. The store is safe for concurrent access via a `sync.RWMutex`.
 
+## Durability Modes
+
+HydraDB supports configurable durability modes for different throughput/latency trade-offs:
+
+### Sync Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `SyncEveryWrite` | fsync after every write (default) | Financial data, critical events |
+| `SyncAsync` | Batch fsyncs by interval/size | General event sourcing, logging |
+| `SyncEverySecond` | fsync once per second | Metrics, temporary buffers |
+
+### Configuration
+
+```go
+// Default (safest, slowest)
+store, err := store.Open(dir)
+
+// Async with 10ms flush interval
+store, err := store.Open(dir, store.WithDurability(store.WithAsync(10*time.Millisecond, 1000)))
+
+// Explicit sync for critical writes
+result, err := store.AppendSync(streamID, eventID, data, expectedVersion)
+```
+
+### Performance Expectations
+
+| Mode | Typical Throughput |
+|------|-------------------|
+| SyncEveryWrite | ~500 events/sec |
+| SyncAsync (10ms) | ~50,000 events/sec |
+| SyncAsync (100ms) | ~100,000 events/sec |
+
 ## gRPC Reflection
 
 The gRPC server has reflection enabled, allowing exploration with tools like `grpcurl`:
