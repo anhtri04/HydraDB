@@ -7,6 +7,40 @@ docs/
 *.exe
 hydra
 hydra.exe
+hydra-server
+bank.exe
+http_stress
+http_stress.exe
+grpc_stress
+grpc_stress.exe
 
 # Data files
 *.log
+hydra.log/
+examples/bank/*.log
+
+# Go test artifacts
+*.test
+*.out
+*.prof
+coverage.*
+coverage/
+
+# Vendor directory
+vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Go workspace files
+go.work
+go.work.sum
